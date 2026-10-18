@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>jxlinfo</AssemblyName>
+    <RootNamespace>JxlSharp.Cli.JxlInfo</RootNamespace>
+    <Description>JPEG XL codestream inspection command-line tool (jxlinfo).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+    <ProjectReference Include="..\JxlSharp.Tools\JxlSharp.Tools.csproj" />
+  </ItemGroup>
+</Project>

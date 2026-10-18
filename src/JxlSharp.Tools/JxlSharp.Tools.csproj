@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Tools</RootNamespace>
+    <Description>Shared CLI utilities, Gaussian blur, SSIMULACRA/SSIMULACRA2 metrics, and tool helpers for JxlSharp.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp.Tools.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Integration.Tests" />
+  </ItemGroup>
+</Project>

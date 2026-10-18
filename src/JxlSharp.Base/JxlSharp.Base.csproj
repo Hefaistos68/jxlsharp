@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Base</RootNamespace>
+    <Description>Foundational types, bit manipulation, math, and SIMD abstractions for JxlSharp.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp.Cms" />
+    <InternalsVisibleTo Include="JxlSharp.Threads" />
+    <InternalsVisibleTo Include="JxlSharp.Decoder" />
+    <InternalsVisibleTo Include="JxlSharp.Encoder" />
+    <InternalsVisibleTo Include="JxlSharp" />
+    <InternalsVisibleTo Include="JxlSharp.Extras" />
+    <InternalsVisibleTo Include="JxlSharp.Tools" />
+    <InternalsVisibleTo Include="JxlSharp.TestLib" />
+    <InternalsVisibleTo Include="JxlSharp.Base.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Extras.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Tools.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Integration.Tests" />
+  </ItemGroup>
+</Project>

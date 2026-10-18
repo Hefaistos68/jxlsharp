@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Extras</RootNamespace>
+    <Description>Extras and external image codecs (PackedImage, CodecInOut, PNM, PGX, NPY, PNG, JPEG, GIF, EXR, EXIF, GainMap, ToneMapping).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp.Tools" />
+    <InternalsVisibleTo Include="JxlSharp.TestLib" />
+    <InternalsVisibleTo Include="JxlSharp.Extras.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Integration.Tests" />
+  </ItemGroup>
+</Project>

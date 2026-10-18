@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>JxlSharp.WinForms</RootNamespace>
+    <AssemblyName>JxlSharp.WinForms</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+    <ProjectReference Include="..\JxlSharp.Tools\JxlSharp.Tools.csproj" />
+  </ItemGroup>
+</Project>

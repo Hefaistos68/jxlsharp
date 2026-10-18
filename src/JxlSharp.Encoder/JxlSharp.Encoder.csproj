@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Encoder</RootNamespace>
+    <Description>JPEG XL encoder implementation (VarDCT, Modular, Fast Lossless, Butteraugli, and lossless JPEG transcoding).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp.Base\JxlSharp.Base.csproj" />
+    <ProjectReference Include="..\JxlSharp.Cms\JxlSharp.Cms.csproj" />
+    <ProjectReference Include="..\JxlSharp.Decoder\JxlSharp.Decoder.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp" />
+    <InternalsVisibleTo Include="JxlSharp.Extras" />
+    <InternalsVisibleTo Include="JxlSharp.Tools" />
+    <InternalsVisibleTo Include="JxlSharp.TestLib" />
+    <InternalsVisibleTo Include="JxlSharp.Encoder.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Extras.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Tools.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Integration.Tests" />
+  </ItemGroup>
+</Project>

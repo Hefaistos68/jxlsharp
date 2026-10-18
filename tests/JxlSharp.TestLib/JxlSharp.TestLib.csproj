@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.TestLib</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <Description>Shared test helpers, test image generators, fake parallel runner, and test memory manager for JxlSharp.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\..\src\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+  </ItemGroup>
+</Project>

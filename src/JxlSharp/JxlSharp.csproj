@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp</RootNamespace>
+    <Description>Pure C#/.NET implementation of JPEG XL (libjxl).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp.Base\JxlSharp.Base.csproj" />
+    <ProjectReference Include="..\JxlSharp.Cms\JxlSharp.Cms.csproj" />
+    <ProjectReference Include="..\JxlSharp.Threads\JxlSharp.Threads.csproj" />
+    <ProjectReference Include="..\JxlSharp.Decoder\JxlSharp.Decoder.csproj" />
+    <ProjectReference Include="..\JxlSharp.Encoder\JxlSharp.Encoder.csproj" />
+  </ItemGroup>
+</Project>
