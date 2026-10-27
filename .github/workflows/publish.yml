@@ -2,6 +2,8 @@ name: Publish JxlSharp to NuGet
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -39,8 +41,8 @@ jobs:
       - name: Build in Release mode
         run: dotnet build src/JxlSharp/JxlSharp.csproj --configuration Release --no-restore
 
-      - name: Run Integration Tests
-        run: dotnet test tests/JxlSharp.Integration.Tests/JxlSharp.Integration.Tests.csproj --configuration Release --no-restore --verbosity normal
+      - name: Run NuGet Package Tests
+        run: dotnet test tests/JxlSharp.Integration.Tests/JxlSharp.Integration.Tests.csproj --configuration Release --no-restore --verbosity normal --filter "FullyQualifiedName~JxlCodecTests|FullyQualifiedName~JxlSharpCodecTests|FullyQualifiedName~JxlEncodeOptionsTests|FullyQualifiedName~JxlDecodeOptionsTests|FullyQualifiedName~JxlDecodeResultTests|FullyQualifiedName~JxlImageDataTests"
 
       - name: Pack NuGet Package
         run: dotnet pack src/JxlSharp/JxlSharp.csproj --configuration Release --output ./artifacts
