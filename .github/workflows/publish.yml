@@ -56,4 +56,16 @@ jobs:
 
       - name: Publish to NuGet.org
         if: ${{ github.event_name == 'push' || !inputs.dry_run }}
-        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::warning::NUGET_API_KEY secret is not configured in repository settings. Skipping push to NuGet.org."
+            exit 0
+          fi
+          output=$(dotnet nuget push ./artifacts/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate 2>&1) || {
+            echo "$output"
+            echo "::error::$(echo "$output" | tr '\n' ' ')"
+            exit 1
+          }
+          echo "$output"
