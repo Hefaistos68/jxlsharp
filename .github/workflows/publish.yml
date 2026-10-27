@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -54,18 +55,13 @@ jobs:
           path: ./artifacts/*.nupkg
           if-no-files-found: error
 
+      - name: NuGet Login (Trusted Publishing)
+        if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ vars.NUGET_USER || 'Hefaistos68' }}
+
       - name: Publish to NuGet.org
         if: ${{ github.event_name == 'push' || !inputs.dry_run }}
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::warning::NUGET_API_KEY secret is not configured in repository settings. Skipping push to NuGet.org."
-            exit 0
-          fi
-          output=$(dotnet nuget push ./artifacts/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate 2>&1) || {
-            echo "$output"
-            echo "::error::$(echo "$output" | tr '\n' ' ')"
-            exit 1
-          }
-          echo "$output"
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
