@@ -17,7 +17,7 @@
     <RepositoryUrl>https://github.com/Hefaistos68</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <IsPackable>false</IsPackable>
-    <RestoreAdditionalProjectSources>$(MSBuildThisFileDirectory)nupkg</RestoreAdditionalProjectSources>
+    <RestoreAdditionalProjectSources Condition="Exists('$(MSBuildThisFileDirectory)nupkg')">$(MSBuildThisFileDirectory)nupkg</RestoreAdditionalProjectSources>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Numerics.Tensors" />

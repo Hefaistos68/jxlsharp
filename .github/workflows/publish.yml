@@ -32,7 +32,9 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore dependencies
-        run: dotnet restore src/JxlSharp/JxlSharp.csproj
+        run: |
+          dotnet restore src/JxlSharp/JxlSharp.csproj
+          dotnet restore tests/JxlSharp.Integration.Tests/JxlSharp.Integration.Tests.csproj
 
       - name: Build in Release mode
         run: dotnet build src/JxlSharp/JxlSharp.csproj --configuration Release --no-restore
