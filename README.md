@@ -1,6 +1,6 @@
 # JxlSharp
 
-**JxlSharp** is a pure C# / .NET 10 implementation of the **JPEG XL (`libjxl` v0.13.0)** reference image codec, bundling the complete encoder, decoder, color management system (CMS), multithreaded runner, and external format codecs into a single self-contained NuGet package.
+**JxlSharp** is a pure C# / .NET 10 implementation of the **JPEG XL (`libjxl` v0.13.0)** reference image codec, a complete encoder, decoder, color management system (CMS), multithreaded runner, and external format codecs, plus a windows forms application to demonstrate the usage of the library, and a command line tools to use the codecs from the command line.
 
 It is feature complete and matches the C++ `libjxl` library outputs. It is by no means a equal performant implementation. There is still a lot of improving to do. Any help is welcome.
 
