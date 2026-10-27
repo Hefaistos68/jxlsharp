@@ -1,0 +1,30 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JxlSharp.Base/JxlSharp.Base.csproj" />
+    <Project Path="src/JxlSharp.Cms/JxlSharp.Cms.csproj" />
+    <Project Path="src/JxlSharp.Threads/JxlSharp.Threads.csproj" />
+    <Project Path="src/JxlSharp.Decoder/JxlSharp.Decoder.csproj" />
+    <Project Path="src/JxlSharp.Encoder/JxlSharp.Encoder.csproj" />
+    <Project Path="src/JxlSharp/JxlSharp.csproj" />
+    <Project Path="src/JxlSharp.Extras/JxlSharp.Extras.csproj" />
+    <Project Path="src/JxlSharp.Tools/JxlSharp.Tools.csproj" />
+    <Project Path="src/JxlSharp.Cli.Cjxl/JxlSharp.Cli.Cjxl.csproj" />
+    <Project Path="src/JxlSharp.Cli.Djxl/JxlSharp.Cli.Djxl.csproj" />
+    <Project Path="src/JxlSharp.Cli.JxlInfo/JxlSharp.Cli.JxlInfo.csproj" />
+    <Project Path="src/JxlSharp.Cli.JxlTran/JxlSharp.Cli.JxlTran.csproj" />
+    <Project Path="src/JxlSharp.Cli.BenchmarkXl/JxlSharp.Cli.BenchmarkXl.csproj" />
+    <Project Path="src/JxlSharp.WinForms/JxlSharp.WinForms.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JxlSharp.TestLib/JxlSharp.TestLib.csproj" />
+    <Project Path="tests/JxlSharp.Base.Tests/JxlSharp.Base.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Cms.Tests/JxlSharp.Cms.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Threads.Tests/JxlSharp.Threads.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Decoder.Tests/JxlSharp.Decoder.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Encoder.Tests/JxlSharp.Encoder.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Extras.Tests/JxlSharp.Extras.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Tools.Tests/JxlSharp.Tools.Tests.csproj" />
+    <Project Path="tests/JxlSharp.Integration.Tests/JxlSharp.Integration.Tests.csproj" />
+    <Project Path="tests/JxlSharp.WinForms.Tests/JxlSharp.WinForms.Tests.csproj" />
+  </Folder>
+</Solution>

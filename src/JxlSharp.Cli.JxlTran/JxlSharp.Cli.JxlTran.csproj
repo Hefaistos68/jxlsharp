@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>jxltran</AssemblyName>
+    <RootNamespace>JxlSharp.Cli.JxlTran</RootNamespace>
+    <Description>JPEG XL container manipulation command-line tool (jxltran).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+    <ProjectReference Include="..\JxlSharp.Tools\JxlSharp.Tools.csproj" />
+  </ItemGroup>
+</Project>

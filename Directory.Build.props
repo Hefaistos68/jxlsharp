@@ -1,0 +1,25 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+
+    <!-- Ownership Metadata -->
+    <Authors>Hefaistos68</Authors>
+    <Company>Hefaistos68</Company>
+    <Product>JxlSharp</Product>
+    <Copyright>Copyright (c) Hefaistos68</Copyright>
+    <PackageProjectUrl>https://github.com/Hefaistos68</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Hefaistos68</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IsPackable>false</IsPackable>
+    <RestoreAdditionalProjectSources>$(MSBuildThisFileDirectory)nupkg</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Numerics.Tensors" />
+  </ItemGroup>
+</Project>

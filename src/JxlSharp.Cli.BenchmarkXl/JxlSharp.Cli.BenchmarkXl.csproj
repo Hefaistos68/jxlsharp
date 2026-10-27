@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>benchmark_xl</AssemblyName>
+    <RootNamespace>JxlSharp.Cli.BenchmarkXl</RootNamespace>
+    <Description>JPEG XL codec benchmark command-line tool (benchmark_xl).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp\JxlSharp.csproj" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" />
+    <ProjectReference Include="..\JxlSharp.Tools\JxlSharp.Tools.csproj" />
+  </ItemGroup>
+</Project>

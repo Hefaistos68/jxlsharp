@@ -1,0 +1,55 @@
+name: Publish JxlSharp to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (build and pack only, do not push to nuget.org)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, Pack & Publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore src/JxlSharp/JxlSharp.csproj
+
+      - name: Build in Release mode
+        run: dotnet build src/JxlSharp/JxlSharp.csproj --configuration Release --no-restore
+
+      - name: Run Integration Tests
+        run: dotnet test tests/JxlSharp.Integration.Tests/JxlSharp.Integration.Tests.csproj --configuration Release --no-restore --verbosity normal
+
+      - name: Pack NuGet Package
+        run: dotnet pack src/JxlSharp/JxlSharp.csproj --configuration Release --output ./artifacts
+
+      - name: Upload Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jxlsharp-nupkg
+          path: ./artifacts/*.nupkg
+          if-no-files-found: error
+
+      - name: Publish to NuGet.org
+        if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

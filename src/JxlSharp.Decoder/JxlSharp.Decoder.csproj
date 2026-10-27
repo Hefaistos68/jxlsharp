@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Decoder</RootNamespace>
+    <Description>JPEG XL decoder implementation (headers, entropy decoding, Modular, VarDCT, render pipeline, and JPEG reconstruction).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp.Base\JxlSharp.Base.csproj" />
+    <ProjectReference Include="..\JxlSharp.Cms\JxlSharp.Cms.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp.Encoder" />
+    <InternalsVisibleTo Include="JxlSharp" />
+    <InternalsVisibleTo Include="JxlSharp.Extras" />
+    <InternalsVisibleTo Include="JxlSharp.Tools" />
+    <InternalsVisibleTo Include="JxlSharp.TestLib" />
+    <InternalsVisibleTo Include="JxlSharp.Decoder.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Encoder.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Extras.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Tools.Tests" />
+    <InternalsVisibleTo Include="JxlSharp.Integration.Tests" />
+  </ItemGroup>
+</Project>

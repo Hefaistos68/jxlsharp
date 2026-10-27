@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp</RootNamespace>
+    <PackageId>JxlSharp</PackageId>
+    <Version>0.13.0</Version>
+    <IsPackable>true</IsPackable>
+    <Description>Pure C#/.NET implementation of JPEG XL (libjxl) with both a simple default-parameter codec interface and an extended full-parameter codec interface.</Description>
+    <PackageTags>jxl;jpeg-xl;jpegxl;libjxl;image;codec;encoder;decoder;vardct;modular;lossless</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause AND MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp.Base\JxlSharp.Base.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Cms\JxlSharp.Cms.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Threads\JxlSharp.Threads.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Decoder\JxlSharp.Decoder.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Encoder\JxlSharp.Encoder.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Extras\JxlSharp.Extras.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\JxlSharp.Tools\JxlSharp.Tools.csproj" PrivateAssets="all" />
+  </ItemGroup>
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)"
+                            Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->'%(RootDir)%(Directory)%(Filename).xml')"
+                            Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference' and Exists('%(RootDir)%(Directory)%(Filename).xml')" />
+    </ItemGroup>
+  </Target>
+</Project>

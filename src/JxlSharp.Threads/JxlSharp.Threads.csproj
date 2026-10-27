@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>JxlSharp.Threads</RootNamespace>
+    <Description>Multithreaded parallel runners (ThreadParallelRunner and ResizableParallelRunner) for JxlSharp.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JxlSharp.Base\JxlSharp.Base.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JxlSharp" />
+    <InternalsVisibleTo Include="JxlSharp.Extras" />
+    <InternalsVisibleTo Include="JxlSharp.Tools" />
+    <InternalsVisibleTo Include="JxlSharp.TestLib" />
+    <InternalsVisibleTo Include="JxlSharp.Threads.Tests" />
+  </ItemGroup>
+</Project>
