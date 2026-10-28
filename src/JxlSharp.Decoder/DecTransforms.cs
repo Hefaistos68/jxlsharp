@@ -233,6 +233,7 @@ namespace JxlSharp.Decoder
         /// <param name="from">Source DCT size.</param>
         /// <param name="to">Target DCT size.</param>
         /// <returns>Read-only span of resample scales.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ReadOnlySpan<float> GetResampleScales(int from, int to)
         {
             return (from, to) switch
@@ -271,6 +272,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="n">DCT size in <c>{4, 8, 16, 32, 64, 128, 256}</c>.</param>
         /// <returns>Read-only span of multipliers.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ReadOnlySpan<float> GetWcMultipliers(int n)
         {
             return n switch
@@ -309,10 +311,10 @@ namespace JxlSharp.Decoder
         }
 
         /// <summary>Gets the row stride in floats.</summary>
-        public nuint Stride => _stride;
+        public nuint Stride { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _stride; }
 
         /// <summary>Gets the underlying read-only span.</summary>
-        public ReadOnlySpan<float> Data => _data;
+        public ReadOnlySpan<float> Data { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _data; }
 
         /// <summary>
         /// Reads the float at (<paramref name="row"/>, <paramref name="col"/>).
@@ -355,10 +357,10 @@ namespace JxlSharp.Decoder
         }
 
         /// <summary>Gets the row stride in floats.</summary>
-        public nuint Stride => _stride;
+        public nuint Stride { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _stride; }
 
         /// <summary>Gets the underlying writable span.</summary>
-        public Span<float> Data => _data;
+        public Span<float> Data { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _data; }
 
         /// <summary>
         /// Writes <paramref name="val"/> to (<paramref name="row"/>, <paramref name="col"/>).
@@ -392,6 +394,7 @@ namespace JxlSharp.Decoder
         /// <param name="cols">Number of columns in <paramref name="from"/>.</param>
         /// <param name="from">Source block.</param>
         /// <param name="to">Destination block.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Run(nuint rows, nuint cols, DctFrom from, DctTo to)
         {
             for (nuint n = 0; n < rows; ++n)
@@ -535,6 +538,7 @@ namespace JxlSharp.Decoder
         /// <param name="from">Source block.</param>
         /// <param name="to">Destination block.</param>
         /// <param name="tmp">Scratch buffer of length at least <c>3 * n * m</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Dct1D(int n, int m, DctFrom from, DctTo to, Span<float> tmp)
         {
             LoadFromBlock(n, m, from, tmp);
@@ -551,6 +555,7 @@ namespace JxlSharp.Decoder
         /// <param name="from">Source block.</param>
         /// <param name="to">Destination block.</param>
         /// <param name="tmp">Scratch buffer of length at least <c>3 * n * m</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Idct1D(int n, int m, DctFrom from, DctTo to, Span<float> tmp)
         {
             Idct1DImpl(n, m, from.Data, (int)from.Stride, to.Data, (int)to.Stride, tmp);
@@ -565,6 +570,7 @@ namespace JxlSharp.Decoder
         /// <param name="from">Source block.</param>
         /// <param name="to">Destination contiguous coefficient buffer of length <c>rows * cols</c>.</param>
         /// <param name="scratchSpace">Scratch buffer of length at least <c>4 * rows * cols</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void ComputeScaledDCT(int rows, int cols, DctFrom from, Span<float> to, Span<float> scratchSpace)
         {
             Span<float> block = scratchSpace;
@@ -596,6 +602,7 @@ namespace JxlSharp.Decoder
         /// <param name="from">Mutable coefficient buffer of length <c>rows * cols</c>.</param>
         /// <param name="to">Destination pixel block.</param>
         /// <param name="scratchSpace">Scratch buffer of length at least <c>4 * rows * cols</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void ComputeScaledIDCT(int rows, int cols, Span<float> from, DctTo to, Span<float> scratchSpace)
         {
             Span<float> block = scratchSpace;
@@ -659,6 +666,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="coeffs">Span of 16 AFV coefficients.</param>
         /// <param name="pixels">Span of 16 output pixels.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void AFVIDCT4x4(ReadOnlySpan<float> coeffs, Span<float> pixels)
         {
             for (int i = 0; i < 16; i++)
@@ -687,6 +695,7 @@ namespace JxlSharp.Decoder
         /// <param name="pixels">Destination pixel buffer.</param>
         /// <param name="pixelsStride">Row stride of <paramref name="pixels"/> in floats.</param>
         /// <param name="scratchSpace">Scratch buffer of length at least <c>4 * max_block_area</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void TransformToPixels(
             AcStrategyType strategy,
             Span<float> coefficients,
@@ -742,6 +751,7 @@ namespace JxlSharp.Decoder
         /// <param name="dcStride">Row stride of the DC image in floats.</param>
         /// <param name="llf">Destination LLF coefficient buffer.</param>
         /// <param name="scratch">Scratch buffer for large multiblock strategies.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void LowestFrequenciesFromDC(
             AcStrategyType strategy,
             ReadOnlySpan<float> dc,
@@ -777,6 +787,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ReinterpretingDCT(
             int rows,
             int cols,
@@ -822,6 +833,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void IdentityToPixels(ReadOnlySpan<float> coefficients, Span<float> pixels, nuint pixelsStride)
         {
             float block00   = coefficients[0];
@@ -844,6 +856,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void IdentitySubblockToPixels(
             int y,
             int x,
@@ -885,6 +898,7 @@ namespace JxlSharp.Decoder
                 coefficients[(y + 2) * 8 + x + 2] + centerVal;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct8x4ToPixels(
             ReadOnlySpan<float> coefficients,
             Span<float> pixels,
@@ -903,6 +917,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct4x8ToPixels(
             ReadOnlySpan<float> coefficients,
             Span<float> pixels,
@@ -921,6 +936,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ExtractHalfSubblock4x8(int offset, float dcVal, ReadOnlySpan<float> coefficients, Span<float> block)
         {
             block[0] = dcVal;
@@ -937,6 +953,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct4x4ToPixels(
             ReadOnlySpan<float> coefficients,
             Span<float> pixels,
@@ -971,6 +988,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ExtractQuarterSubblock4x4(
             int y,
             int x,
@@ -992,6 +1010,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct2x2ToPixels(ReadOnlySpan<float> coefficients, Span<float> pixels, nuint pixelsStride)
         {
             const int kDim     = (int)FrameDimensions.kBlockDim;
@@ -1015,6 +1034,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void IDCT2TopBlock(int s, ReadOnlySpan<float> block, int strideOut, Span<float> output)
         {
             const int kDim   = (int)FrameDimensions.kBlockDim;
@@ -1046,6 +1066,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AFVTransformToPixels(
             int afvKind,
             ReadOnlySpan<float> coefficients,
@@ -1088,6 +1109,7 @@ namespace JxlSharp.Decoder
                 scratchSpace);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void WriteAfvCornerSubblock(
             int afvX,
             int afvY,
@@ -1109,6 +1131,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct1DImpl(int n, int sz, Span<float> mem, Span<float> tmp)
         {
             if (n <= 1)
@@ -1147,6 +1170,7 @@ namespace JxlSharp.Decoder
             InverseEvenOdd(n, sz, tmp, mem);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Idct1DImpl(
             int n,
             int sz,
@@ -1195,6 +1219,7 @@ namespace JxlSharp.Decoder
             MultiplyAndAdd(n, sz, tmp, to, toStride);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void AddReverse(int n, int sz, ReadOnlySpan<float> aIn1, ReadOnlySpan<float> aIn2, Span<float> aOut)
         {
             for (int i = 0; i < n; i++)
@@ -1210,6 +1235,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SubReverse(int n, int sz, ReadOnlySpan<float> aIn1, ReadOnlySpan<float> aIn2, Span<float> aOut)
         {
             for (int i = 0; i < n; i++)
@@ -1225,6 +1251,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void B(int n, int sz, Span<float> coeff)
         {
             for (int k = 0; k < sz; k++)
@@ -1244,6 +1271,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void BTranspose(int n, int sz, Span<float> coeff)
         {
             for (int i = n - 1; i > 0; i--)
@@ -1328,6 +1356,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void InverseEvenOdd(int n, int sz, ReadOnlySpan<float> aIn, Span<float> aOut)
         {
             int half = n / 2;
@@ -1343,6 +1372,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ForwardEvenOdd(int n, int sz, ReadOnlySpan<float> aIn, int aInStride, Span<float> aOut)
         {
             int half = n / 2;
@@ -1358,6 +1388,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Multiply(int n, int sz, Span<float> coeff)
         {
             int half                        = n / 2;
@@ -1375,6 +1406,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void MultiplyAndAdd(int n, int sz, ReadOnlySpan<float> coeff, Span<float> output, int outStride)
         {
             int half                        = n / 2;
@@ -1398,6 +1430,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void LoadFromBlock(int n, int sz, DctFrom from, Span<float> coeff)
         {
             for (int i = 0; i < n; i++)
@@ -1406,6 +1439,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StoreToBlockAndScale(int n, int sz, ReadOnlySpan<float> coeff, DctTo to)
         {
             float mul = 1.0f / n;

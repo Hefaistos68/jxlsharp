@@ -31,6 +31,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="data">Input data span.</param>
         /// <returns>Maximum value, or 0 if the span is empty.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint MaxValue(ReadOnlySpan<uint> data)
         {
             if (data.IsEmpty)
@@ -47,6 +48,7 @@ namespace JxlSharp.Base
         /// <param name="data">Input data span.</param>
         /// <param name="len">Number of elements to inspect.</param>
         /// <returns>Maximum value, or 0 if <paramref name="len"/> is 0.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint MaxValue(ReadOnlySpan<uint> data, nuint len)
         {
             if (len == 0)
@@ -64,6 +66,7 @@ namespace JxlSharp.Base
         /// <param name="v0">First vector span.</param>
         /// <param name="v1">Second vector span.</param>
         /// <param name="mem">Destination interleaved buffer of length at least <c>2 * v0.Length</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void StoreInterleaved<T>(ReadOnlySpan<T> v0, ReadOnlySpan<T> v1, Span<T> mem)
             where T : unmanaged
         {
@@ -86,6 +89,7 @@ namespace JxlSharp.Base
         /// <param name="v2">Third vector span.</param>
         /// <param name="v3">Fourth vector span.</param>
         /// <param name="mem">Destination interleaved buffer of length at least <c>4 * v0.Length</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void StoreInterleaved<T>(
             ReadOnlySpan<T> v0,
             ReadOnlySpan<T> v1,
@@ -113,6 +117,7 @@ namespace JxlSharp.Base
         /// <param name="v4567">Concatenated second 4 vectors (each of length <paramref name="lanes"/>).</param>
         /// <param name="lanes">Number of lanes per vector.</param>
         /// <param name="mem">Destination buffer of length at least <c>8 * lanes</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void StoreInterleaved8(
             ReadOnlySpan<float> v0123,
             ReadOnlySpan<float> v4567,
@@ -139,6 +144,7 @@ namespace JxlSharp.Base
         /// <param name="from">Source buffer with stride <paramref name="fromStride"/>.</param>
         /// <param name="to">Destination 8x8 block (stride 8).</param>
         /// <param name="fromStride">Row stride of <paramref name="from"/> in elements.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Transpose8x8Block(ReadOnlySpan<int> from, Span<int> to, nuint fromStride)
         {
             int stride = (int)fromStride;

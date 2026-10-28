@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
 {
@@ -30,6 +31,7 @@ namespace JxlSharp.Base
         /// <param name="ysizeMax">Maximum height.</param>
         /// <param name="xend">Ending X bound.</param>
         /// <param name="yend">Ending Y bound.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect(int xbegin, int ybegin, int xsizeMax, int ysizeMax, int xend, int yend)
         {
             _x0    = xbegin;
@@ -45,6 +47,7 @@ namespace JxlSharp.Base
         /// <param name="ybegin">Starting Y coordinate.</param>
         /// <param name="xsize">Width.</param>
         /// <param name="ysize">Height.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect(int xbegin, int ybegin, int xsize, int ysize)
         {
             _x0    = xbegin;
@@ -57,6 +60,7 @@ namespace JxlSharp.Base
         /// Initializes a new instance of the <see cref="Rect"/> struct covering the entire <paramref name="image"/>.
         /// </summary>
         /// <param name="image">Image or plane dimensions.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect(IImageDimensions image)
             : this(0, 0, (int)image.XSize, (int)image.YSize)
         {
@@ -65,38 +69,63 @@ namespace JxlSharp.Base
         /// <summary>
         /// Gets the inclusive starting X coordinate.
         /// </summary>
-        public int X0 => _x0;
+        public int X0
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _x0;
+        }
 
         /// <summary>
         /// Gets the inclusive starting Y coordinate.
         /// </summary>
-        public int Y0 => _y0;
+        public int Y0
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _y0;
+        }
 
         /// <summary>
         /// Gets the horizontal width.
         /// </summary>
-        public int XSize => _xsize;
+        public int XSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _xsize;
+        }
 
         /// <summary>
         /// Gets the vertical height.
         /// </summary>
-        public int YSize => _ysize;
+        public int YSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _ysize;
+        }
 
         /// <summary>
         /// Gets the exclusive ending X coordinate (<c>X0 + XSize</c>).
         /// </summary>
-        public int X1 => _x0 + _xsize;
+        public int X1
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _x0 + _xsize;
+        }
 
         /// <summary>
         /// Gets the exclusive ending Y coordinate (<c>Y0 + YSize</c>).
         /// </summary>
-        public int Y1 => _y0 + _ysize;
+        public int Y1
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _y0 + _ysize;
+        }
 
         /// <summary>
         /// Construct a subrect that resides in the given <paramref name="image"/>.
         /// </summary>
         /// <param name="image">Image or plane dimensions.</param>
         /// <returns>Cropped rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect Crop(IImageDimensions image)
         {
             return Intersection(new Rect(image));
@@ -109,6 +138,7 @@ namespace JxlSharp.Base
         /// <param name="areaXSize">Area width.</param>
         /// <param name="areaYSize">Area height.</param>
         /// <returns>Cropped rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect Crop(int areaXSize, int areaYSize)
         {
             return Intersection(new Rect(0, 0, areaXSize, areaYSize));
@@ -119,6 +149,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="other">Other rectangle.</param>
         /// <returns>Intersection rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect Intersection(Rect other)
         {
             return new Rect(
@@ -136,6 +167,7 @@ namespace JxlSharp.Base
         /// <param name="xOffset">Horizontal offset.</param>
         /// <param name="yOffset">Vertical offset.</param>
         /// <returns>Translated rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect Translate(int xOffset, int yOffset)
         {
             return new Rect(_x0 + xOffset, _y0 + yOffset, _xsize, _ysize);
@@ -148,6 +180,7 @@ namespace JxlSharp.Base
         /// <param name="image">Target plane.</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<T> Row<T>(ImagePlane<T> image, nuint y)
             where T : unmanaged
         {
@@ -161,6 +194,7 @@ namespace JxlSharp.Base
         /// <param name="image">Target plane.</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<T> Row<T>(ImagePlane<T> image, int y)
             where T : unmanaged
         {
@@ -174,6 +208,7 @@ namespace JxlSharp.Base
         /// <param name="image">Source plane.</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset read-only row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> ConstRow<T>(ImagePlane<T> image, nuint y)
             where T : unmanaged
         {
@@ -187,6 +222,7 @@ namespace JxlSharp.Base
         /// <param name="image">Source plane.</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset read-only row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> ConstRow<T>(ImagePlane<T> image, int y)
             where T : unmanaged
         {
@@ -201,6 +237,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<T> PlaneRow<T>(Image3<T> image, nuint c, nuint y)
             where T : unmanaged
         {
@@ -215,6 +252,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<T> PlaneRow<T>(Image3<T> image, int c, nuint y)
             where T : unmanaged
         {
@@ -229,6 +267,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<T> PlaneRow<T>(Image3<T> image, int c, int y)
             where T : unmanaged
         {
@@ -243,6 +282,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset read-only row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> ConstPlaneRow<T>(Image3<T> image, nuint c, nuint y)
             where T : unmanaged
         {
@@ -257,6 +297,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset read-only row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> ConstPlaneRow<T>(Image3<T> image, int c, nuint y)
             where T : unmanaged
         {
@@ -271,6 +312,7 @@ namespace JxlSharp.Base
         /// <param name="c">Plane index (0..2).</param>
         /// <param name="y">Relative row index within this rectangle.</param>
         /// <returns>Offset read-only row span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> ConstPlaneRow<T>(Image3<T> image, int c, int y)
             where T : unmanaged
         {
@@ -282,6 +324,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="other">Enclosing rectangle candidate.</param>
         /// <returns><c>true</c> if inside; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsInside(Rect other)
         {
             return _x0 >= other.X0 && X1 <= other.X1 && _y0 >= other.Y0 && Y1 <= other.Y1;
@@ -292,6 +335,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="image">Image or plane dimensions.</param>
         /// <returns><c>true</c> if inside; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsInside(IImageDimensions image)
         {
             return IsInside(new Rect(image));
@@ -302,6 +346,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="other">Other rectangle.</param>
         /// <returns><c>true</c> if identical; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsSame(Rect other)
         {
             return _x0 == other._x0 && _xsize == other._xsize && _y0 == other._y0 && _ysize == other._ysize;
@@ -313,6 +358,7 @@ namespace JxlSharp.Base
         /// <param name="shiftX">Horizontal bit shift.</param>
         /// <param name="shiftY">Vertical bit shift.</param>
         /// <returns>Shifted rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect ShiftLeft(int shiftX, int shiftY)
         {
             return new Rect(
@@ -327,6 +373,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="shift">Bit shift.</param>
         /// <returns>Shifted rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect ShiftLeft(int shift)
         {
             return ShiftLeft(shift, shift);
@@ -362,6 +409,7 @@ namespace JxlSharp.Base
         /// <param name="border">Border thickness in pixels.</param>
         /// <param name="parent">Bounding parent rectangle.</param>
         /// <returns>Extended rectangle.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Rect Extend(int border, Rect parent)
         {
             int newX0 = _x0 > parent.X0 + border ? _x0 - border : parent.X0;
@@ -388,6 +436,7 @@ namespace JxlSharp.Base
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Rect other)
         {
             return IsSame(other);
@@ -411,6 +460,7 @@ namespace JxlSharp.Base
         /// <param name="left">Left operand.</param>
         /// <param name="right">Right operand.</param>
         /// <returns><c>true</c> if equal; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator ==(Rect left, Rect right)
         {
             return left.Equals(right);
@@ -422,12 +472,14 @@ namespace JxlSharp.Base
         /// <param name="left">Left operand.</param>
         /// <param name="right">Right operand.</param>
         /// <returns><c>true</c> if not equal; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator !=(Rect left, Rect right)
         {
             return !left.Equals(right);
         }
 
         // Returns sizeMax, or whatever is left in [begin, end).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int ClampedSize(int begin, int sizeMax, int end)
         {
             if ((long)begin + sizeMax <= end)

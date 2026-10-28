@@ -86,27 +86,51 @@ namespace JxlSharp.Base
         }
 
         /// <inheritdoc />
-        public nuint XSize => _xsize;
+        public nuint XSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _xsize;
+        }
 
         /// <summary>Gets the width in valid pixels (C++ naming alias).</summary>
-        public nuint xsize => _xsize;
+        public nuint xsize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _xsize;
+        }
 
         /// <inheritdoc />
-        public nuint YSize => _ysize;
+        public nuint YSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _ysize;
+        }
 
         /// <summary>Gets the height in valid pixels (C++ naming alias).</summary>
-        public nuint ysize => _ysize;
+        public nuint ysize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _ysize;
+        }
 
         /// <summary>
         /// Gets the row stride in bytes (including alignment padding).
         /// NOTE: do not use this for copying rows - the valid <see cref="XSize"/> may be much less.
         /// </summary>
-        public nuint BytesPerRow => _bytesPerRow;
+        public nuint BytesPerRow
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _bytesPerRow;
+        }
 
         /// <summary>
         /// Gets the <see cref="JxlMemoryManager"/> associated with this plane.
         /// </summary>
-        public JxlMemoryManager? MemoryManager => _memoryManager;
+        public JxlMemoryManager? MemoryManager
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _memoryManager;
+        }
 
         /// <summary>
         /// Useful for pre-allocating image with some padding for alignment purposes
@@ -323,12 +347,20 @@ namespace JxlSharp.Base
         /// Gets the number of elements (including padding) per row.
         /// WARNING: this must NOT be used to determine <see cref="PlaneBase.XSize"/>.
         /// </summary>
-        public nint PixelsPerRow => (nint)(BytesPerRow / (nuint)Unsafe.SizeOf<T>());
+        public nint PixelsPerRow
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => (nint)(BytesPerRow / (nuint)Unsafe.SizeOf<T>());
+        }
 
         /// <summary>
         /// Gets the underlying managed element array.
         /// </summary>
-        public T[] BackingArray => _elements;
+        public T[] BackingArray
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _elements;
+        }
 
         /// <summary>
         /// Creates and allocates a new <see cref="ImagePlane{T}"/> of dimensions <paramref name="xsize"/> x <paramref name="ysize"/>.
@@ -627,23 +659,43 @@ namespace JxlSharp.Base
         /// <summary>
         /// Gets the <see cref="JxlMemoryManager"/> associated with this image.
         /// </summary>
-        public JxlMemoryManager? MemoryManager => _planes[0].MemoryManager;
+        public JxlMemoryManager? MemoryManager
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _planes[0].MemoryManager;
+        }
 
         /// <inheritdoc />
-        public nuint XSize => _planes[0].XSize;
+        public nuint XSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _planes[0].XSize;
+        }
 
         /// <inheritdoc />
-        public nuint YSize => _planes[0].YSize;
+        public nuint YSize
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _planes[0].YSize;
+        }
 
         /// <summary>
         /// Gets the row stride in bytes (including alignment padding).
         /// </summary>
-        public nuint BytesPerRow => _planes[0].BytesPerRow;
+        public nuint BytesPerRow
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _planes[0].BytesPerRow;
+        }
 
         /// <summary>
         /// Gets the number of elements (including padding) per row.
         /// </summary>
-        public nint PixelsPerRow => _planes[0].PixelsPerRow;
+        public nint PixelsPerRow
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _planes[0].PixelsPerRow;
+        }
 
         /// <summary>
         /// Creates and allocates a new 3-plane <see cref="Image3{T}"/> of dimensions <paramref name="xsize"/> x <paramref name="ysize"/>.

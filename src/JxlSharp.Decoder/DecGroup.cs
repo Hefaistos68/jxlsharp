@@ -829,6 +829,7 @@ namespace JxlSharp.Decoder
 
         // Decode quantized AC coefficients of DCT blocks.
         // LLF components in the output block will not be modified.
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         internal static Status DecodeACVarBlock(in AcVarBlockArgs args)
         {
             // Equal to number of LLF coefficients.
@@ -860,6 +861,7 @@ namespace JxlSharp.Decoder
             return ReadAcCoefficientsLoop(in args, coveredBlocks, size, order, histoOffset, nzeros);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void FillBlockNonZeros(in AcVarBlockArgs args, nuint coveredBlocks, nuint nzeros)
         {
             int shiftedNzeros = (int)((nzeros + coveredBlocks - 1u) >> (int)args.Log2CoveredBlocks);
@@ -877,6 +879,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status ReadAcCoefficientsLoop(
             in AcVarBlockArgs args,
             nuint coveredBlocks,
@@ -1322,6 +1325,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status ProcessSingleBlockRow(ref GroupImplState state, in RowLoopContext rowCtx)
         {
             ColorCorrelation colorCorrelation = state.DecState.Shared.Cmap.Base;
@@ -1366,6 +1370,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status ProcessSingleVarBlock(
             ref GroupImplState state,
             in RowLoopContext rowCtx,
@@ -1423,6 +1428,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static Status PrepareQBlockPointers(ref GroupImplState state, nuint size, Span<ACPtr> qblock)
         {
             if (state.Accumulate)
@@ -1597,6 +1603,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DequantAndTransformToPixels(
             ref GroupImplState state,
             in RowLoopContext rowCtx,
@@ -1654,6 +1661,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DequantBlock(in DequantBlockArgs args)
         {
             float scaledDequantS = args.InvGlobalScale / args.Quant;

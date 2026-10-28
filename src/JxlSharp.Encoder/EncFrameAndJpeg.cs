@@ -273,6 +273,7 @@ namespace JxlSharp.Encoder
             return runOk;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ExtractDcBlockRow(
             Image3<float> opsin,
             Rect rect,
@@ -665,6 +666,7 @@ namespace JxlSharp.Encoder
         /// <param name="errorDiffusion">Whether error diffusion is enabled per channel (length 3).</param>
         /// <param name="blockIn">Input floating-point frequency coefficients.</param>
         /// <param name="blockOut">Output quantized integer coefficients.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void QuantizeBlockAC(
             in QuantBlockArgs args,
             ReadOnlySpan<bool> errorDiffusion,
@@ -704,6 +706,7 @@ namespace JxlSharp.Encoder
         /// <param name="ysize">Transform block height in 8x8 blocks.</param>
         /// <param name="block">Scaled floating-point DCT coefficients.</param>
         /// <param name="qblock">Quantized integer DCT coefficients to adjust in-place.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void AdjustQuantBlockAC(
             Quantizer quantizer,
             AcStrategyType kind,
@@ -743,6 +746,7 @@ namespace JxlSharp.Encoder
         /// <param name="blockIn">Input Y DCT coefficients.</param>
         /// <param name="blockOut">Output roundtrip dequantized Y DCT coefficients.</param>
         /// <param name="qblock">Output quantized integer Y DCT coefficients.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void QuantizeRoundtripYBlockAC(
             in QuantBlockArgs args,
             ReadOnlySpan<bool> errorDiffusion,
@@ -782,6 +786,7 @@ namespace JxlSharp.Encoder
         /// <param name="opsin">Input XYB opsin image.</param>
         /// <param name="dc">Optional DC scratch image.</param>
         /// <returns><see cref="Status.OkStatus"/> on success.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static Status ComputeCoefficients(
             nuint groupIdx,
             PassesEncoderState encState,
@@ -860,6 +865,7 @@ namespace JxlSharp.Encoder
             public readonly Span<float> YRound;
             public readonly Span<int> Qblock;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public QuantizePtrs(Span<float> coeffs, Span<float> yRound, Span<int> qblock)
             {
                 Coeffs = coeffs;
@@ -962,6 +968,7 @@ namespace JxlSharp.Encoder
             return q - (biases[3] / q);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ForwardTransformBlock(
             Image3<float> opsin,
             Rect blockGroupRect,
@@ -986,6 +993,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void QuantizeTransformBlock(
             PassesEncoderState encState,
             Rect blockGroupRect,
@@ -1042,6 +1050,7 @@ namespace JxlSharp.Encoder
             QuantizeBlockAC(in bArgs, errDiff, ptrs.Coeffs.Slice((int)(2 * size)), ptrs.Qblock.Slice((int)(2 * size)));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SplitBlockAcrossPasses(
             PassesEncoderState encState,
             (nuint GroupIdx, nuint Offset, nuint Size) blockLoc,

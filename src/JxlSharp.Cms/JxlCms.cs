@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 using System;
+using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 
 namespace JxlSharp.Cms
@@ -666,6 +667,7 @@ namespace JxlSharp.Cms
         {
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static bool DoColorSpaceTransform(
             object? cmsData,
             nuint thread,
@@ -709,6 +711,7 @@ namespace JxlSharp.Cms
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ExecuteProfileTransform(
             JxlCmsState t,
             int width,
@@ -732,6 +735,7 @@ namespace JxlSharp.Cms
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ReadSourcePixel(
             JxlCmsState t,
             ReadOnlySpan<float> src,
@@ -755,6 +759,7 @@ namespace JxlSharp.Cms
             b = src[idx + 2];
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void WriteDestinationPixel(
             JxlCmsState t,
             Span<float> dst,

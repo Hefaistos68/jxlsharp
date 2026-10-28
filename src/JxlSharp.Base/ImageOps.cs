@@ -681,6 +681,7 @@ namespace JxlSharp.Base
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float AverageWindow(
             ReadOnlySpan<float> rowIn,
             nuint inStride,

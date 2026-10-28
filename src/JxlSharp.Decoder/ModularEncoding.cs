@@ -967,6 +967,7 @@ namespace JxlSharp.Decoder
             return false;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeZeroPredictorChannel(
             ChannelDecodeState state,
             Channel channel,
@@ -1003,6 +1004,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeGradientRleChannel(ChannelDecodeState state, Channel channel, nuint ctxId)
         {
             long sv = PackSigned.Unpack(state.FlV);
@@ -1047,6 +1049,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeGradientSingleLeafChannel(
             ChannelDecodeState state,
             Channel channel,
@@ -1070,6 +1073,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeGradientLutChannel(ChannelDecodeState state, Channel channel, bool usesLz77)
         {
             byte[] lut = state.TreeLut.ContextLookup;
@@ -1094,6 +1098,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeWpLutChannel(ChannelDecodeState state, Channel channel)
         {
             WeightedState wpState = new WeightedState(state.WpHeader, channel.W, channel.H);
@@ -1127,6 +1132,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status DecodeGeneralTreeChannel(
             ChannelDecodeState state,
             Channel channel,
@@ -1202,6 +1208,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int SkipStaticNodes(
             IReadOnlyList<PropertyDecisionNode> globalTree,
             ReadOnlySpan<int> staticProps,

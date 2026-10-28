@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Threads</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>Multithreaded parallel runners (ThreadParallelRunner and ResizableParallelRunner) for JxlSharp.</Description>
   </PropertyGroup>
   <ItemGroup>

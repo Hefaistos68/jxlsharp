@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Decoder</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>JPEG XL decoder implementation (headers, entropy decoding, Modular, VarDCT, render pipeline, and JPEG reconstruction).</Description>
   </PropertyGroup>
   <ItemGroup>

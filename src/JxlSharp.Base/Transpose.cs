@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
 {
@@ -24,6 +25,7 @@ namespace JxlSharp.Base
         /// <param name="toStride">Destination row stride in elements.</param>
         /// <param name="rows">Number of rows in source block.</param>
         /// <param name="cols">Number of columns in source block.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GenericTransposeBlock<T>(
             ReadOnlySpan<T> from,
             int fromStride,
@@ -55,6 +57,7 @@ namespace JxlSharp.Base
         /// <param name="toStride">Destination row stride in elements.</param>
         /// <param name="rows">Number of rows in source block.</param>
         /// <param name="cols">Number of columns in source block.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void GenericTransposeBlock<T>(
             ReadOnlySpan<T> from,
             nuint fromStride,

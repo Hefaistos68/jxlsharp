@@ -3,6 +3,11 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>djxl</AssemblyName>
     <RootNamespace>JxlSharp.Cli.Djxl</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <IlcInstructionSet>native</IlcInstructionSet>
+    <EventSourceSupport>true</EventSourceSupport>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
     <Description>JPEG XL decompressor command-line tool (djxl).</Description>
   </PropertyGroup>
   <ItemGroup>

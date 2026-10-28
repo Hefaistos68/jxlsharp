@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Base</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>Foundational types, bit manipulation, math, and SIMD abstractions for JxlSharp.</Description>
   </PropertyGroup>
   <ItemGroup>

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Encoder</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>JPEG XL encoder implementation (VarDCT, Modular, Fast Lossless, Butteraugli, and lossless JPEG transcoding).</Description>
   </PropertyGroup>
   <ItemGroup>

@@ -1413,6 +1413,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static float FindBestPredictor(
             TreeSamples treeSamples,
             uint begin,
@@ -1490,6 +1491,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void EvaluatePropertySplits(
             TreeSamples treeSamples,
             SplitInfo cur,
@@ -1793,6 +1795,7 @@ namespace JxlSharp.Encoder
             return FwdRct(chans, chans, rctType, pool);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void FwdRctRow(
             IReadOnlyList<Channel> inChannels,
             IReadOnlyList<Channel> outChannels,
@@ -2014,6 +2017,7 @@ namespace JxlSharp.Encoder
                 "FwdHorizontalSqueeze");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void SmoothHorizontalRow(
             ReadOnlySpan<int> rowIn,
             Span<int> rowAvg,
@@ -2092,6 +2096,7 @@ namespace JxlSharp.Encoder
                 "FwdVerticalSqueeze");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void SmoothVerticalRow(
             Channel chIn,
             Channel chAvg,

@@ -1812,6 +1812,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private (nuint X, nuint Y) ColorDimensionsToChannelDimensions((nuint X, nuint Y) inDim, nuint c, int stage)
         {
             (nuint X, nuint Y) shift = ChannelShifts[stage][c];
@@ -1821,6 +1822,7 @@ namespace JxlSharp.Decoder
             return (rx, ry);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private (nuint X, nuint Y) BorderToStore(nuint c)
         {
             (nuint X, nuint Y) ret = ColorDimensionsToChannelDimensions(_groupBorder, c, 0);
@@ -1831,11 +1833,13 @@ namespace JxlSharp.Decoder
             return ret;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private nuint GroupInputXSize(nuint c)
         {
             return (FrameDimensions.GroupDim << _baseColorShift) >> (int)ChannelShifts[0][c].X;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private nuint GroupInputYSize(nuint c)
         {
             return (FrameDimensions.GroupDim << _baseColorShift) >> (int)ChannelShifts[0][c].Y;
@@ -2563,6 +2567,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private Status RenderRect(
             nuint threadId,
             ImagePlane<float>[] inputData,
@@ -2709,6 +2714,7 @@ namespace JxlSharp.Decoder
             return info.BaseRow + (info.Stride * (y & info.YModMinus1));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private Status ExecuteVirtualRows(
             nuint threadId,
             int numChannels,
@@ -2783,6 +2789,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private Status ProcessInOutStagesForVy(
             (int Vy, int NumExtraRows, int NumChannels) vyInfo,
             RowBufferInfo[][] rows,
@@ -2841,6 +2848,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private void PrepareIoRowsForStage(
             (int Y, int StageIdx, int NumChannels) ctx,
             RowBufferInfo[][] rows,
@@ -2904,6 +2912,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void MakeStageInputRow(
             (int Y, int StageIdx, int C, int Iy, int BorderY, int BorderX) info,
             RowBufferInfo[][] rows,
@@ -2916,6 +2925,7 @@ namespace JxlSharp.Decoder
             ApplyXMirroring(chRows[info.Iy], info.BorderX, stageGroupRect.X0, stageGroupRect.XSize, stageImageRect.XSize);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private Status ProcessTrailingStagesForVy(
             (int Vy, int NumExtraRows, int NumChannels, nint XPixelsSkip) vyInfo,
             RowBufferInfo[][] rows,
@@ -3024,6 +3034,7 @@ namespace JxlSharp.Decoder
             return y;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ApplyXMirroring(
             PipelineRow row,
             int borderx,

@@ -89,6 +89,7 @@ namespace JxlSharp.Decoder
         /// Initializes a new instance of the <see cref="ACPtr"/> struct with a 16-bit memory slice.
         /// </summary>
         /// <param name="p">16-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ACPtr(Memory<short> p)
         {
             Mem32 = default;
@@ -99,6 +100,7 @@ namespace JxlSharp.Decoder
         /// Initializes a new instance of the <see cref="ACPtr"/> struct with a 32-bit memory slice.
         /// </summary>
         /// <param name="p">32-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ACPtr(Memory<int> p)
         {
             Mem32 = p;
@@ -110,6 +112,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="mem32">32-bit coefficient memory.</param>
         /// <param name="mem16">16-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ACPtr(Memory<int> mem32, Memory<short> mem16)
         {
             Mem32 = mem32;
@@ -117,19 +120,20 @@ namespace JxlSharp.Decoder
         }
 
         /// <summary>Gets a span over the 32-bit integer coefficients.</summary>
-        public Span<int> Span32 => Mem32.Span;
+        public Span<int> Span32 { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem32.Span; }
 
         /// <summary>Gets a span over the 16-bit integer coefficients.</summary>
-        public Span<short> Span16 => Mem16.Span;
+        public Span<short> Span16 { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem16.Span; }
 
         /// <summary>Gets a value indicating whether both underlying memory slices are empty.</summary>
-        public bool IsNull => Mem32.IsEmpty && Mem16.IsEmpty;
+        public bool IsNull { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem32.IsEmpty && Mem16.IsEmpty; }
 
         /// <summary>
         /// Advances the active coefficient memory by <paramref name="offset"/> elements.
         /// </summary>
         /// <param name="offset">Element offset.</param>
         /// <returns>Sliced <see cref="ACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ACPtr Slice(int offset) =>
             new ACPtr(Mem32.IsEmpty ? default : Mem32.Slice(offset), Mem16.IsEmpty ? default : Mem16.Slice(offset));
 
@@ -138,6 +142,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="offset">Element offset.</param>
         /// <returns>Sliced <see cref="ACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ACPtr Slice(nuint offset) => Slice((int)offset);
 
         /// <summary>
@@ -146,6 +151,7 @@ namespace JxlSharp.Decoder
         /// <param name="ptr">Source pointer wrapper.</param>
         /// <param name="offset">Element offset.</param>
         /// <returns>Offset <see cref="ACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ACPtr operator +(ACPtr ptr, int offset) => ptr.Slice(offset);
 
         /// <summary>
@@ -154,6 +160,7 @@ namespace JxlSharp.Decoder
         /// <param name="ptr">Source pointer wrapper.</param>
         /// <param name="offset">Element offset.</param>
         /// <returns>Offset <see cref="ACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ACPtr operator +(ACPtr ptr, nuint offset) => ptr.Slice((int)offset);
     }
 
@@ -173,6 +180,7 @@ namespace JxlSharp.Decoder
         /// Initializes a new instance of the <see cref="ConstACPtr"/> struct with a 16-bit memory slice.
         /// </summary>
         /// <param name="p">16-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ConstACPtr(ReadOnlyMemory<short> p)
         {
             Mem32 = default;
@@ -183,6 +191,7 @@ namespace JxlSharp.Decoder
         /// Initializes a new instance of the <see cref="ConstACPtr"/> struct with a 32-bit memory slice.
         /// </summary>
         /// <param name="p">32-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ConstACPtr(ReadOnlyMemory<int> p)
         {
             Mem32 = p;
@@ -194,6 +203,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="mem32">32-bit coefficient memory.</param>
         /// <param name="mem16">16-bit coefficient memory.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ConstACPtr(ReadOnlyMemory<int> mem32, ReadOnlyMemory<short> mem16)
         {
             Mem32 = mem32;
@@ -201,19 +211,20 @@ namespace JxlSharp.Decoder
         }
 
         /// <summary>Gets a read-only span over the 32-bit integer coefficients.</summary>
-        public ReadOnlySpan<int> Span32 => Mem32.Span;
+        public ReadOnlySpan<int> Span32 { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem32.Span; }
 
         /// <summary>Gets a read-only span over the 16-bit integer coefficients.</summary>
-        public ReadOnlySpan<short> Span16 => Mem16.Span;
+        public ReadOnlySpan<short> Span16 { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem16.Span; }
 
         /// <summary>Gets a value indicating whether both underlying memory slices are empty.</summary>
-        public bool IsNull => Mem32.IsEmpty && Mem16.IsEmpty;
+        public bool IsNull { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => Mem32.IsEmpty && Mem16.IsEmpty; }
 
         /// <summary>
         /// Advances the active coefficient memory by <paramref name="offset"/> elements.
         /// </summary>
         /// <param name="offset">Element offset.</param>
         /// <returns>Sliced <see cref="ConstACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ConstACPtr Slice(int offset) =>
             new ConstACPtr(Mem32.IsEmpty ? default : Mem32.Slice(offset), Mem16.IsEmpty ? default : Mem16.Slice(offset));
 
@@ -222,6 +233,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="offset">Element offset.</param>
         /// <returns>Sliced <see cref="ConstACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ConstACPtr Slice(nuint offset) => Slice((int)offset);
 
         /// <summary>
@@ -230,6 +242,7 @@ namespace JxlSharp.Decoder
         /// <param name="ptr">Source pointer wrapper.</param>
         /// <param name="offset">Element offset.</param>
         /// <returns>Offset <see cref="ConstACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ConstACPtr operator +(ConstACPtr ptr, int offset) => ptr.Slice(offset);
 
         /// <summary>
@@ -238,6 +251,7 @@ namespace JxlSharp.Decoder
         /// <param name="ptr">Source pointer wrapper.</param>
         /// <param name="offset">Element offset.</param>
         /// <returns>Offset <see cref="ConstACPtr"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ConstACPtr operator +(ConstACPtr ptr, nuint offset) => ptr.Slice((int)offset);
     }
 

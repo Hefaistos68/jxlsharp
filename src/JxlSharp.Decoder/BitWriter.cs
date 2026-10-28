@@ -7,6 +7,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -39,7 +40,7 @@ namespace JxlSharp.Decoder
         /// <summary>
         /// Gets the total number of bits written so far.
         /// </summary>
-        public nuint BitsWritten => _bitsWritten;
+        public nuint BitsWritten { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _bitsWritten; }
 
         /// <summary>
         /// Gets the memory manager associated with this writer.
@@ -50,6 +51,7 @@ namespace JxlSharp.Decoder
         /// Returns a read-only span over the written bytes (must be byte-aligned).
         /// </summary>
         /// <returns>Written bytes span.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<byte> GetSpan()
         {
             nuint byteCount = Common.DivCeil(_bitsWritten, Common.BitsPerByte);
@@ -201,6 +203,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="nBits">Number of bits to write (0..56).</param>
         /// <param name="bits">Bits to write.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Write(nuint nBits, ulong bits)
         {
             if (nBits == 0)
@@ -228,6 +231,7 @@ namespace JxlSharp.Decoder
         /// <summary>
         /// Pads the bit stream with zero bits up to the next byte boundary.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void ZeroPadToByte()
         {
             nuint remainderBits = Common.RoundUpBitsToByteMultiple(_bitsWritten) - _bitsWritten;

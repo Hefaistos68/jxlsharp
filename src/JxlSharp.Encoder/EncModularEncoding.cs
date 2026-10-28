@@ -614,6 +614,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void EvaluateLearnSample(
             nuint channelW,
             int x,
@@ -855,6 +856,7 @@ namespace JxlSharp.Encoder
             return EncodeTreeChannelGeneral(image, channel, chan, wpHeader, tree, staticProps, (int)numProps, useWp, tokens);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status EncodeWpLutChannel(
             Channel channel,
             WeightedHeader wpHeader,
@@ -893,6 +895,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status EncodeGradientLutChannel(
             Channel channel,
             byte[] contextLookup,
@@ -929,6 +932,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void EncodeZeroPredictorChannel(Channel channel, uint ctxId, List<Token> tokens)
         {
             for (nuint y = 0; y < channel.H; y++)
@@ -942,6 +946,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status EncodeSingleGradientChannel(Channel channel, uint ctxId, List<Token> tokens)
         {
             bool unhealthy = false;
@@ -971,6 +976,7 @@ namespace JxlSharp.Encoder
             return unhealthy ? Status.Failure("Residual overflow") : Status.OkStatus;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status EncodeTreeChannelGeneral(
             ModularImage image,
             Channel channel,

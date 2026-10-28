@@ -6,6 +6,7 @@
 // Error handling: Status return type + helper methods.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
 {
@@ -55,13 +56,14 @@ namespace JxlSharp.Base
         /// "true" means Ok while "false" means a generic fatal error.
         /// </summary>
         /// <param name="ok">Whether the operation succeeded.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Status(bool ok)
         {
             _code = ok ? StatusCode.Ok : StatusCode.GenericError;
 
             if (!ok)
             {
-                _lastFailureMessage = Environment.StackTrace;
+                RecordStackTrace();
             }
         }
 
@@ -69,11 +71,27 @@ namespace JxlSharp.Base
         /// Initializes a new instance of the <see cref="Status"/> struct from a <see cref="StatusCode"/>.
         /// </summary>
         /// <param name="code">The status code.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Status(StatusCode code)
         {
             _code = code;
 
-            if (code != StatusCode.Ok && string.IsNullOrEmpty(_lastFailureMessage))
+            if (code != StatusCode.Ok)
+            {
+                RecordStackTraceIfEmpty();
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RecordStackTrace()
+        {
+            _lastFailureMessage = Environment.StackTrace;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RecordStackTraceIfEmpty()
+        {
+            if (string.IsNullOrEmpty(_lastFailureMessage))
             {
                 _lastFailureMessage = Environment.StackTrace;
             }
@@ -82,27 +100,44 @@ namespace JxlSharp.Base
         /// <summary>
         /// Gets a successful <see cref="Status"/> instance.
         /// </summary>
-        public static Status OkStatus => new Status(StatusCode.Ok);
+        public static Status OkStatus
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new Status(StatusCode.Ok);
+        }
 
         /// <summary>
         /// Gets a successful <see cref="Status"/> instance.
         /// </summary>
-        public static Status Ok => new Status(StatusCode.Ok);
+        public static Status Ok
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new Status(StatusCode.Ok);
+        }
 
         /// <summary>
         /// Gets the underlying <see cref="StatusCode"/>.
         /// </summary>
-        public StatusCode Code => _code;
+        public StatusCode Code
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _code;
+        }
 
         /// <summary>
         /// Gets a value indicating whether the status represents success (<see cref="StatusCode.Ok"/>).
         /// </summary>
-        public bool IsOk => _code == StatusCode.Ok;
+        public bool IsOk
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _code == StatusCode.Ok;
+        }
 
         /// <summary>
         /// Returns whether the status code is a fatal error.
         /// </summary>
         /// <returns><c>true</c> if fatal; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsFatalError()
         {
             return (int)_code > 0;
@@ -163,6 +198,7 @@ namespace JxlSharp.Base
         /// Implicitly converts a boolean to a <see cref="Status"/>.
         /// </summary>
         /// <param name="ok">Boolean value.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator Status(bool ok)
         {
             return new Status(ok);
@@ -172,6 +208,7 @@ namespace JxlSharp.Base
         /// Implicitly converts a <see cref="StatusCode"/> to a <see cref="Status"/>.
         /// </summary>
         /// <param name="code">Status code.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator Status(StatusCode code)
         {
             return new Status(code);
@@ -181,12 +218,14 @@ namespace JxlSharp.Base
         /// Implicitly converts a <see cref="Status"/> to a boolean (<c>true</c> when <see cref="StatusCode.Ok"/>).
         /// </summary>
         /// <param name="status">Status value.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator bool(Status status)
         {
             return status._code == StatusCode.Ok;
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Status other)
         {
             return _code == other._code;
@@ -216,6 +255,7 @@ namespace JxlSharp.Base
         /// <param name="left">Left operand.</param>
         /// <param name="right">Right operand.</param>
         /// <returns><c>true</c> if equal; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator ==(Status left, Status right)
         {
             return left.Equals(right);
@@ -227,6 +267,7 @@ namespace JxlSharp.Base
         /// <param name="left">Left operand.</param>
         /// <param name="right">Right operand.</param>
         /// <returns><c>true</c> if not equal; otherwise, <c>false</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator !=(Status left, Status right)
         {
             return !left.Equals(right);
@@ -246,6 +287,7 @@ namespace JxlSharp.Base
         /// Initializes a new instance of the <see cref="StatusOr{T}"/> struct with an error <see cref="StatusCode"/>.
         /// </summary>
         /// <param name="code">Non-OK error status code.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public StatusOr(StatusCode code)
         {
             if (code == StatusCode.Ok)
@@ -261,6 +303,7 @@ namespace JxlSharp.Base
         /// Initializes a new instance of the <see cref="StatusOr{T}"/> struct with an error <see cref="Status"/>.
         /// </summary>
         /// <param name="status">Non-OK error status.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public StatusOr(Status status)
             : this(status.Code)
         {
@@ -270,6 +313,7 @@ namespace JxlSharp.Base
         /// Initializes a new instance of the <see cref="StatusOr{T}"/> struct with a valid result value.
         /// </summary>
         /// <param name="value">The result value.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public StatusOr(T value)
         {
             _value = value;
@@ -279,18 +323,27 @@ namespace JxlSharp.Base
         /// <summary>
         /// Gets a value indicating whether the operation succeeded.
         /// </summary>
-        public bool IsOk => _code == StatusCode.Ok;
+        public bool IsOk
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _code == StatusCode.Ok;
+        }
 
         /// <summary>
         /// Gets the <see cref="Status"/> of the operation.
         /// </summary>
-        public Status Status => new Status(_code);
+        public Status Status
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new Status(_code);
+        }
 
         /// <summary>
         /// Gets the underlying value if <see cref="IsOk"/> is <c>true</c>; otherwise throws <see cref="InvalidOperationException"/>.
         /// </summary>
         public T Value
         {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
                 if (!IsOk)
@@ -306,6 +359,7 @@ namespace JxlSharp.Base
         /// Implicitly converts a value of type <typeparamref name="T"/> into a successful <see cref="StatusOr{T}"/>.
         /// </summary>
         /// <param name="value">Result value.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator StatusOr<T>(T value)
         {
             return new StatusOr<T>(value);
@@ -315,6 +369,7 @@ namespace JxlSharp.Base
         /// Implicitly converts an error <see cref="StatusCode"/> into a failed <see cref="StatusOr{T}"/>.
         /// </summary>
         /// <param name="code">Error status code.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator StatusOr<T>(StatusCode code)
         {
             return new StatusOr<T>(code);
@@ -324,6 +379,7 @@ namespace JxlSharp.Base
         /// Implicitly converts an error <see cref="Status"/> into a failed <see cref="StatusOr{T}"/>.
         /// </summary>
         /// <param name="status">Error status.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator StatusOr<T>(Status status)
         {
             return new StatusOr<T>(status);
@@ -333,6 +389,7 @@ namespace JxlSharp.Base
         /// Implicitly converts a <see cref="StatusOr{T}"/> to a boolean (<c>true</c> when <see cref="IsOk"/>).
         /// </summary>
         /// <param name="statusOr">StatusOr value.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator bool(StatusOr<T> statusOr)
         {
             return statusOr.IsOk;

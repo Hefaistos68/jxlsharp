@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <PackageId>JxlSharp</PackageId>
     <Version>0.13.0</Version>
     <IsPackable>true</IsPackable>

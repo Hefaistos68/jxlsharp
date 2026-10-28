@@ -882,6 +882,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void InvRCTRow(
             ModularImage input,
             int m,
@@ -947,6 +948,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int GetDeltaPaletteValue(int index, int c, int bitDepth)
         {
             if (c >= KRgbChannels)
@@ -967,6 +969,7 @@ namespace JxlSharp.Decoder
             return result;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int GetImplicitPaletteValue(int index, int c, int paletteSize, int bitDepth)
         {
             if (c >= KRgbChannels)
@@ -1446,6 +1449,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void UnsqueezeHRow(Channel chin, Channel chinResidual, Channel chout, nuint y)
         {
             ReadOnlySpan<int> pResidual = chinResidual.ConstRow(y);
@@ -1546,6 +1550,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void UnsqueezeVSlice(
             Channel chin,
             Channel chinResidual,

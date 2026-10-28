@@ -510,12 +510,14 @@ namespace JxlSharp.Decoder
         /// Verifies that the final ANS state matches <see cref="AnsParams.AnsSignature"/>.
         /// </summary>
         /// <returns><c>true</c> if the final state is valid.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool CheckANSFinalState() => _state == (AnsParams.AnsSignature << 16);
 
         /// <summary>
         /// Returns whether this reader uses LZ77 backward references.
         /// </summary>
         /// <returns><c>true</c> if LZ77 is enabled.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool UsesLZ77() => _lz77Window != null;
 
         /// <summary>
@@ -638,6 +640,7 @@ namespace JxlSharp.Decoder
         /// <param name="br">Source <see cref="BitReader"/>.</param>
         /// <param name="contextMap">Context map mapping unclustered contexts to histogram indices.</param>
         /// <returns>Decoded unsigned integer.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public uint ReadHybridUint(nuint ctx, BitReader br, ReadOnlySpan<byte> contextMap)
         {
             return ReadHybridUintClustered(usesLz77: true, contextMap[(int)ctx], br);
@@ -985,6 +988,7 @@ namespace JxlSharp.Decoder
         /// <param name="uintConfig">Configuration to encode.</param>
         /// <param name="writer">Destination <see cref="BitWriter"/>.</param>
         /// <param name="logAlphaSize">Log2 of alphabet size.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void EncodeUintConfig(in HybridUintConfig uintConfig, BitWriter writer, nuint logAlphaSize)
         {
             writer.Write((nuint)Bits.CeilLog2Nonzero((uint)logAlphaSize + 1u), uintConfig.SplitExponent);

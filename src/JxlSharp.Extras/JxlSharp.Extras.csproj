@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Extras</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>Extras and external image codecs (PackedImage, CodecInOut, PNM, PGX, NPY, PNG, JPEG, GIF, EXR, EXIF, GainMap, ToneMapping).</Description>
   </PropertyGroup>
   <ItemGroup>

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>JxlSharp.Cms</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
     <Description>Color Management System (CMS), transfer functions, tone mapping, and ICC profile engine for JxlSharp.</Description>
   </PropertyGroup>
   <ItemGroup>

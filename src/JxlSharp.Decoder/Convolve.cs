@@ -163,6 +163,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="c">Input center lanes.</param>
         /// <param name="dst">Output shifted/mirrored lanes.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void FirstL1(ReadOnlySpan<float> c, Span<float> dst)
         {
             int n = Math.Min(c.Length, dst.Length);
@@ -185,6 +186,7 @@ namespace JxlSharp.Decoder
         /// </summary>
         /// <param name="c">Input center lanes (length at least 2).</param>
         /// <param name="dst">Output shifted/mirrored lanes.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void FirstL2(ReadOnlySpan<float> c, Span<float> dst)
         {
             int n = Math.Min(c.Length, dst.Length);
@@ -219,6 +221,7 @@ namespace JxlSharp.Decoder
         /// <param name="pool">Optional thread pool.</param>
         /// <param name="output">Destination float plane.</param>
         /// <returns><see cref="Status.OkStatus"/> on success.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static Status SlowSymmetric3(
             ImagePlane<float> input,
             Rect rect,
@@ -257,6 +260,7 @@ namespace JxlSharp.Decoder
         /// <param name="output">Destination float plane.</param>
         /// <param name="outRect">Destination region in <paramref name="output"/>.</param>
         /// <returns><see cref="Status.OkStatus"/> on success.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static Status SlowSeparable5(
             ImagePlane<float> input,
             Rect inRect,
@@ -313,6 +317,7 @@ namespace JxlSharp.Decoder
         /// <param name="output">Destination float plane.</param>
         /// <param name="outRect">Destination region in <paramref name="output"/>.</param>
         /// <returns><see cref="Status.OkStatus"/> on success.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static Status Symmetric5(
             ImagePlane<float> input,
             Rect inRect,
@@ -369,6 +374,7 @@ namespace JxlSharp.Decoder
             return SlowSeparable5(input, rect, weights, pool, output, outRect);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SlowSymmetric3Row(
             ImagePlane<float> input,
             long iy,
@@ -393,6 +399,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float SlowSymmetric3Pixel(
             ImagePlane<float> input,
             long ix,
@@ -421,6 +428,7 @@ namespace JxlSharp.Decoder
             return sum;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static StatusOr<float> SlowSeparablePixel(
             ImagePlane<float> input,
             Rect rect,
@@ -466,6 +474,7 @@ namespace JxlSharp.Decoder
             return mul;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Symmetric5Row(
             ImagePlane<float> input,
             Rect rect,
@@ -483,6 +492,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float Symmetric5Border(
             ImagePlane<float> input,
             long ix,

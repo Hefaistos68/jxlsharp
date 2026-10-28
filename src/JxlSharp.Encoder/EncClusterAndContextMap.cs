@@ -926,6 +926,7 @@ namespace JxlSharp.Encoder
                 });
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int IndexOf(ReadOnlySpan<byte> v, byte value)
         {
             for (int i = 0; i < v.Length; ++i)
@@ -939,6 +940,7 @@ namespace JxlSharp.Encoder
             return v.Length;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void MoveToFront(Span<byte> v, int index)
         {
             byte value = v[index];
@@ -1099,6 +1101,7 @@ namespace JxlSharp.Encoder
         /// <param name="tmpNumNzeroes">Scratch 3-plane image for tracking per-block non-zero counts.</param>
         /// <param name="outputAndContext">Tuple of output token list, quantized DC plane, quantizer field plane, and block context map.</param>
         /// <returns><see cref="Status.OkStatus"/> on success.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static Status TokenizeCoefficients(
             ReadOnlySpan<uint> orders,
             Rect rect,
@@ -1168,6 +1171,7 @@ namespace JxlSharp.Encoder
             public readonly ReadOnlySpan<int> RowQf;
             public readonly nuint NzerosStride;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public BlockRowPointers(
                 ReadOnlySpan<uint> orders,
                 ReadOnlySpan<ACPtr> acRows,
@@ -1185,6 +1189,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static BlockRowPointers SetupBlockRowPointers(
             nuint by,
             Rect rect,
@@ -1205,6 +1210,7 @@ namespace JxlSharp.Encoder
                 inputs.NzerosStride);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status TokenizeBlockAllChannels(
             nuint bx,
             nuint by,
@@ -1266,6 +1272,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool EmitBlockChannelTokens(
             ReadOnlySpan<int> block,
             ReadOnlySpan<uint> order,
@@ -1305,6 +1312,7 @@ namespace JxlSharp.Encoder
             return (rowTop[x] + row[x - 1] + 1) / 2;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int NumNonZero8x8ExceptDC(ReadOnlySpan<int> block, Span<int> nzerosPos)
         {
             int nzeros = 0;
@@ -1322,6 +1330,7 @@ namespace JxlSharp.Encoder
             return nzeros;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int NumNonZeroExceptLLF(
             (nuint Cx, nuint Cy, nuint CoveredBlocks, nuint Log2CoveredBlocks, nuint Stride) geom,
             AcStrategy acs,

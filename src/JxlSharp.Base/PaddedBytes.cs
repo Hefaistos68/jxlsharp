@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
 {
@@ -36,32 +37,56 @@ namespace JxlSharp.Base
         /// <summary>
         /// Gets the <see cref="JxlMemoryManager"/> used by this buffer.
         /// </summary>
-        public JxlMemoryManager? MemoryManager => _memoryManager;
+        public JxlMemoryManager? MemoryManager
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _memoryManager;
+        }
 
         /// <summary>
         /// Gets the current logical size in bytes.
         /// </summary>
-        public nuint Size => _size;
+        public nuint Size
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _size;
+        }
 
         /// <summary>
         /// Gets the current reserved capacity in bytes (excluding the 8-byte BitWriter padding).
         /// </summary>
-        public nuint Capacity => _capacity;
+        public nuint Capacity
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _capacity;
+        }
 
         /// <summary>
         /// Gets a value indicating whether the buffer is empty (<c>Size == 0</c>).
         /// </summary>
-        public bool Empty => _size == 0;
+        public bool Empty
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _size == 0;
+        }
 
         /// <summary>
         /// Gets a <see cref="Span{Byte}"/> over the active bytes (<c>0..Size</c>).
         /// </summary>
-        public Span<byte> Span => _size == 0 ? Span<byte>.Empty : _data.Span.Slice(0, (int)_size);
+        public Span<byte> Span
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _size == 0 ? Span<byte>.Empty : _data.Span.Slice(0, (int)_size);
+        }
 
         /// <summary>
         /// Gets a <see cref="Span{Byte}"/> over the full allocated buffer including the 8-byte BitWriter padding.
         /// </summary>
-        public Span<byte> PaddedSpan => _data.Span;
+        public Span<byte> PaddedSpan
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _data.Span;
+        }
 
         /// <summary>
         /// Gets or sets the byte at index <paramref name="i"/>.
@@ -148,6 +173,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="capacity">Requested minimum capacity in bytes.</param>
         /// <returns><see cref="Status.OkStatus"/> on success; otherwise <see cref="StatusCode.GenericError"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Status Reserve(nuint capacity)
         {
             if (capacity <= _capacity)
@@ -180,6 +206,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="size">New size in bytes.</param>
         /// <returns><see cref="Status.OkStatus"/> on success; otherwise <see cref="StatusCode.GenericError"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Status Resize(nuint size)
         {
             Status status = Reserve(size);
@@ -223,6 +250,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="x">Byte value to append.</param>
         /// <returns><see cref="Status.OkStatus"/> on success; otherwise <see cref="StatusCode.GenericError"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Status PushBack(byte x)
         {
             if (_size == _capacity)
@@ -314,6 +342,7 @@ namespace JxlSharp.Base
             return Reserve(size);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void BoundsCheck(nuint i)
         {
             // <= is safe due to padding and required by BitWriter.

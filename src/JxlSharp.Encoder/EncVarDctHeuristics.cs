@@ -10,6 +10,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
 
@@ -90,6 +91,7 @@ namespace JxlSharp.Encoder
         /// <summary>
         /// Finds the optimal CfL multiplier minimizing L1 error plus distance penalty.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static int FindBestMultiplier(
             ReadOnlySpan<float> valuesM,
             ReadOnlySpan<float> valuesS,
@@ -163,6 +165,7 @@ namespace JxlSharp.Encoder
             return (int)Math.Clamp(MathF.Round(delta), -128.0f, 127.0f);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float ComputeMultiplierDerivative(
             ReadOnlySpan<float> valuesM,
             ReadOnlySpan<float> valuesS,
@@ -289,6 +292,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float ComputeBlockDc(
             ImagePlane<float> plane,
             nuint bx,
@@ -380,6 +384,7 @@ namespace JxlSharp.Encoder
                 "CfLAcCorrelation");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ComputeTileAcCorrelation(
             ColorCorrelation baseCorr,
             Image3<float> opsin,
@@ -460,6 +465,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ExtractBlockCoeffs(
             ImagePlane<float> plane,
             nuint bx,
@@ -506,6 +512,7 @@ namespace JxlSharp.Encoder
                 scratchSpace);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float QuantizeCoefficient(float val, float invStep)
         {
             float scaled = val * invStep;
@@ -918,6 +925,7 @@ namespace JxlSharp.Encoder
         /// <summary>
         /// Returns a span over the coefficients starting at <paramref name="blockIndex"/> for channel <paramref name="c"/>.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<int> Block(int blockIndex, int c, int count)
         {
             return _channelData[c].AsSpan(blockIndex * (int)FrameDimensions.kDCTBlockSize, count);
@@ -970,6 +978,7 @@ namespace JxlSharp.Encoder
         public nuint SrcStride;
 
         /// <summary>Returns a span starting at the pixel at (x, y) in channel c.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly Span<float> Pixel(nuint c, nuint x, nuint y)
         {
             Memory<float> baseRow = c == 0 ? SrcRowX : (c == 1 ? SrcRowY : SrcRowB);
@@ -978,18 +987,21 @@ namespace JxlSharp.Encoder
         }
 
         /// <summary>Returns the masking value at block (bx, by).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly float Masking(nuint bx, nuint by)
         {
             return MaskingFieldRow.Span[(int)(by * MaskingFieldStride + bx)];
         }
 
         /// <summary>Returns the span of the 2x2 masking values at block (bx, by).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly Span<float> MaskingPtr1x1(nuint bx, nuint by)
         {
             return Masking1x1FieldRow.Span.Slice((int)(2 * by * Masking1x1FieldStride + 2 * bx));
         }
 
         /// <summary>Returns the quantization value at block (bx, by).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly float Quant(nuint bx, nuint by)
         {
             return QuantFieldRow.Span[(int)(by * QuantFieldStride + bx)];
@@ -1128,6 +1140,7 @@ namespace JxlSharp.Encoder
             return Status.OkStatus;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private AcStrategyType FindBest8x8Strategy(
             Image3<float> src,
             ColorCorrelationMap cmap,
@@ -1200,6 +1213,7 @@ namespace JxlSharp.Encoder
             return bestType;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float AdjustEntropyMul8x8(AcStrategyType type, float entropyMul, float butteraugliTarget)
         {
             if ((type == AcStrategyType.DCT2X2 || type == AcStrategyType.IDENTITY) && butteraugliTarget < 5.0f)
@@ -1220,6 +1234,7 @@ namespace JxlSharp.Encoder
             return entropyMul;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Load8x8Block(Image3<float> src, nuint bx, nuint by, Span<float> block)
         {
             nuint x0    = bx * FrameDimensions.kBlockDim;
@@ -1264,6 +1279,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private float ForwardAndRoundtrip8x8(
             AcStrategyType strategy,
             float quant,
@@ -1302,6 +1318,7 @@ namespace JxlSharp.Encoder
             return entropyCost;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private float QuantizeAndDequantize8x8(
             AcStrategyType strategy,
             float quant,
@@ -1346,6 +1363,7 @@ namespace JxlSharp.Encoder
             return entropy;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static float Compute8x8LossScalar(
             ReadOnlySpan<float> reconError,
             float masking,

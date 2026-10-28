@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 
 namespace JxlSharp.Tools
@@ -165,6 +166,7 @@ namespace JxlSharp.Tools
         /// <param name="xsize">Number of elements in the row.</param>
         /// <param name="inRow">Input row span.</param>
         /// <param name="outRow">Output row span.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void FastGaussian1D(
             RecursiveGaussian rg,
             nuint xsize,
@@ -338,6 +340,7 @@ namespace JxlSharp.Tools
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StepHorizontalScalar(
             in HorizontalState s,
             ReadOnlySpan<float> inRow,
@@ -378,6 +381,7 @@ namespace JxlSharp.Tools
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StepHorizontalVector4(
             in HorizontalState s,
             ReadOnlySpan<float> inRow,
@@ -451,6 +455,7 @@ namespace JxlSharp.Tools
                 "FastGaussianHorizontal");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status FastGaussianVertical(
             JxlMemoryManager? memoryManager,
             RecursiveGaussian rg,
@@ -490,6 +495,7 @@ namespace JxlSharp.Tools
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void VerticalStrip(
             RecursiveGaussian rg,
             nuint x,
@@ -537,6 +543,7 @@ namespace JxlSharp.Tools
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void VerticalStepSingle(
             RecursiveGaussian rg,
             nuint width,
@@ -582,6 +589,7 @@ namespace JxlSharp.Tools
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void VerticalStepTwo(
             RecursiveGaussian rg,
             nuint width,
@@ -637,6 +645,7 @@ namespace JxlSharp.Tools
             public readonly Vec4[] Prev;
             public readonly Vec4[] Prev2;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public HorizontalState(RecursiveGaussian rg)
             {
                 MulIn1    = Vec4.LoadArray(rg.MulIn, 0);
@@ -652,6 +661,7 @@ namespace JxlSharp.Tools
                 Prev2     = new Vec4[3];
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void BroadcastLane0()
             {
                 Prev2[0] = Prev2[0].Broadcast0();
@@ -670,6 +680,7 @@ namespace JxlSharp.Tools
             public readonly float Z;
             public readonly float W;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4(float x, float y, float z, float w)
             {
                 X = x;
@@ -678,31 +689,37 @@ namespace JxlSharp.Tools
                 W = w;
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 Set(float v)
             {
                 return new Vec4(v, v, v, v);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 LoadArray(float[] arr, int offset)
             {
                 return new Vec4(arr[offset + 0], arr[offset + 1], arr[offset + 2], arr[offset + 3]);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 Load(ReadOnlySpan<float> span)
             {
                 return new Vec4(span[0], span[1], span[2], span[3]);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 Add(Vec4 a, Vec4 b)
             {
                 return new Vec4(a.X + b.X, a.Y + b.Y, a.Z + b.Z, a.W + b.W);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 Mul(Vec4 a, Vec4 b)
             {
                 return new Vec4(a.X * b.X, a.Y * b.Y, a.Z * b.Z, a.W * b.W);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static Vec4 MulAdd(Vec4 a, Vec4 b, Vec4 c)
             {
                 return new Vec4(
@@ -712,41 +729,49 @@ namespace JxlSharp.Tools
                     a.W * b.W + c.W);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 Broadcast0()
             {
                 return new Vec4(X, X, X, X);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 Broadcast1()
             {
                 return new Vec4(Y, Y, Y, Y);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 Broadcast2()
             {
                 return new Vec4(Z, Z, Z, Z);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 Broadcast3()
             {
                 return new Vec4(W, W, W, W);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 ShiftLeft1()
             {
                 return new Vec4(0.0f, X, Y, Z);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 ShiftLeft2()
             {
                 return new Vec4(0.0f, 0.0f, X, Y);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public Vec4 ShiftLeft3()
             {
                 return new Vec4(0.0f, 0.0f, 0.0f, X);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void Store(Span<float> span)
             {
                 span[0] = X;

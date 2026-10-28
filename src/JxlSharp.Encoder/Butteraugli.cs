@@ -1166,6 +1166,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         internal static Status CombineChannelsToDiffmap(
             ImagePlane<float> mask,
             Image3<float> blockDiffDc,
@@ -1748,6 +1749,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvolveBorderColumn(
             ImagePlane<float> inPlane,
             float[] kernel,
@@ -1781,6 +1783,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status ConvolutionWithTranspose(
             ImagePlane<float> inPlane,
             float[] kernel,
@@ -1825,6 +1828,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvolveMiddleTranspose(
             ImagePlane<float> inPlane,
             float[] scaledKernel,
@@ -1905,6 +1909,7 @@ namespace JxlSharp.Encoder
             return x + x;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void XybLowFreqToVals(Image3<float> xybLf)
         {
             const float xmulScalar    = 33.832837186260f;
@@ -1932,6 +1937,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static Status SuppressXByY(ImagePlane<float> inY, ImagePlane<float> inoutX)
         {
             if (!ImageOps.SameSize(inoutX, inY))
@@ -1961,6 +1967,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Subtract(ImagePlane<float> a, ImagePlane<float> b, ImagePlane<float> c)
         {
             for (nuint y = 0; y < a.YSize; ++y)
@@ -2048,6 +2055,7 @@ namespace JxlSharp.Encoder
             return SuppressXByY(hf[1], hf[0]);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AdjustMfAndHfPlane(
             ImagePlane<float> mfPlane,
             ImagePlane<float> hfPlane,
@@ -2109,6 +2117,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AdjustHfAndUhfPlane(ImagePlane<float> hfPlane, ImagePlane<float> uhfPlane, bool isXChannel)
         {
             const float kRemoveHfRange  = 1.5f;
@@ -2157,6 +2166,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float MaltaUnitLF(ReadOnlySpan<float> d, int centerIdx, int xs)
         {
             int xs2 = 2 * xs;
@@ -2187,6 +2197,7 @@ namespace JxlSharp.Encoder
                    (s12 * s12) + (s13 * s13) + (s14 * s14) + (s15 * s15);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float MaltaUnitHF(ReadOnlySpan<float> d, int centerIdx, int xs)
         {
             int xs2 = 2 * xs;
@@ -2217,6 +2228,7 @@ namespace JxlSharp.Encoder
                    (s12 * s12) + (s13 * s13) + (s14 * s14) + (s15 * s15);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static float PaddedMaltaUnit(bool isLf, ImagePlane<float> diffs, nuint x0, nuint y0)
         {
             if (x0 >= 4 && y0 >= 4 && x0 < (diffs.XSize - 4) && y0 < (diffs.YSize - 4))
@@ -2287,6 +2299,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void PrecomputeMaltaDiffs(
             ImagePlane<float> lum0,
             ImagePlane<float> lum1,
@@ -2352,6 +2365,7 @@ namespace JxlSharp.Encoder
             return result;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AccumulateMaltaUnits(bool isLf, ImagePlane<float> diffs, ImagePlane<float> blockDiffAc)
         {
             nuint xsize = diffs.XSize;
@@ -2368,6 +2382,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void CombineChannelsForMasking(
             ImagePlane<float>[] hf,
             ImagePlane<float>[] uhf,
@@ -2395,6 +2410,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DiffPrecompute(ImagePlane<float> xyb, float mul, float biasArg, ImagePlane<float> outPlane)
         {
             float bias     = mul * biasArg;
@@ -2436,6 +2452,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void FuzzyErosion(ImagePlane<float> fromPlane, ImagePlane<float> toPlane)
         {
             nuint xsize = fromPlane.XSize;
@@ -2452,6 +2469,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float FuzzyErodePixel(ImagePlane<float> fromPlane, nuint x, nuint y, nuint xsize, nuint ysize)
         {
             const nuint kStep = 3;
@@ -2483,6 +2501,7 @@ namespace JxlSharp.Encoder
             return (0.45f * min0) + (0.3f * min1) + (0.25f * min2);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void GatherVerticalMin3(
             ImagePlane<float> fromPlane,
             nuint xCol,
@@ -2562,6 +2581,7 @@ namespace JxlSharp.Encoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void StoreMaskAndMaskError(
             ImagePlane<float> diff0,
             ImagePlane<float> blurred0,
@@ -2618,6 +2638,7 @@ namespace JxlSharp.Encoder
             return retval * retval;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void L2Diff(
             ImagePlane<float> i0,
             ImagePlane<float> i1,
@@ -2644,6 +2665,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void SetL2Diff(
             ImagePlane<float> i0,
             ImagePlane<float> i1,
@@ -2672,6 +2694,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void L2DiffAsymmetric(
             ImagePlane<float> i0,
             ImagePlane<float> i1,
@@ -2783,6 +2806,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void OpsinDynamicsRow(
             Image3<float> rgb,
             Image3<float> blurred,

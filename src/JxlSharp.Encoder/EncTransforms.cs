@@ -139,6 +139,7 @@ namespace JxlSharp.Encoder
         /// </summary>
         /// <param name="pixels">Span of 16 input spatial pixels.</param>
         /// <param name="coeffs">Span of 16 output AFV coefficients.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void AFVDCT4x4(ReadOnlySpan<float> pixels, Span<float> coeffs)
         {
             for (int j = 0; j < 16; ++j)
@@ -164,6 +165,7 @@ namespace JxlSharp.Encoder
         /// <param name="pixelsStride">Row stride of <paramref name="pixels"/> in floats.</param>
         /// <param name="coefficients">Destination coefficient buffer.</param>
         /// <param name="scratchSpace">Scratch buffer of length at least <c>4 * max_block_area</c>.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void TransformFromPixels(
             AcStrategyType strategy,
             ReadOnlySpan<float> pixels,
@@ -218,6 +220,7 @@ namespace JxlSharp.Encoder
         /// <param name="dc">Destination top-left DC span in the DC plane.</param>
         /// <param name="dcStride">Row stride of the DC plane in floats.</param>
         /// <param name="scratch">Scratch buffer for large multiblock strategies.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void DCFromLowestFrequencies(
             AcStrategyType strategy,
             ReadOnlySpan<float> block,
@@ -252,6 +255,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ReinterpretingIDCT(
             int rows,
             int cols,
@@ -297,6 +301,7 @@ namespace JxlSharp.Encoder
             DecTransforms.ComputeScaledIDCT(rows, cols, block, output, scratchSpace);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void IdentityFromPixels(ReadOnlySpan<float> pixels, nuint pixelsStride, Span<float> coefficients)
         {
             Span<float> dcs = stackalloc float[4];
@@ -320,6 +325,7 @@ namespace JxlSharp.Encoder
             coefficients[9] = (block00 - block01 - block10 + block11) * 0.25f;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float IdentitySubblockFromPixels(
             int y,
             int x,
@@ -350,6 +356,7 @@ namespace JxlSharp.Encoder
             return blockDc * (1.0f / 16.0f);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct8x4FromPixels(
             ReadOnlySpan<float> pixels,
             nuint pixelsStride,
@@ -369,6 +376,7 @@ namespace JxlSharp.Encoder
             coefficients[8] = (dcs[0] - dcs[1]) * 0.5f;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct4x8FromPixels(
             ReadOnlySpan<float> pixels,
             nuint pixelsStride,
@@ -393,6 +401,7 @@ namespace JxlSharp.Encoder
             coefficients[8] = (dcs[0] - dcs[1]) * 0.5f;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StoreHalfSubblock4x8(int offset, ReadOnlySpan<float> block, Span<float> coefficients, out float dcVal)
         {
             dcVal = block[0];
@@ -409,6 +418,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct4x4FromPixels(
             ReadOnlySpan<float> pixels,
             nuint pixelsStride,
@@ -442,6 +452,7 @@ namespace JxlSharp.Encoder
             coefficients[9] = (block00 - block01 - block10 + block11) * 0.25f;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StoreQuarterSubblock4x4(
             int y,
             int x,
@@ -463,6 +474,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Dct2x2FromPixels(ReadOnlySpan<float> pixels, nuint pixelsStride, Span<float> coefficients)
         {
             const int kDim     = (int)FrameDimensions.kBlockDim;
@@ -486,6 +498,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void DCT2TopBlock(int s, ReadOnlySpan<float> block, int strideIn, Span<float> output)
         {
             const int kDim   = (int)FrameDimensions.kBlockDim;
@@ -517,6 +530,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AfvFromPixels(
             int afvKind,
             ReadOnlySpan<float> pixels,
@@ -557,6 +571,7 @@ namespace JxlSharp.Encoder
             coefficients[8] = dc0 * 0.25f + dc1 * 0.25f - dc2 * 0.5f;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ReadAfvCornerSubblock(
             int afvX,
             int afvY,

@@ -6,6 +6,7 @@
 // 3x3 matrix operations.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
 {
@@ -20,6 +21,7 @@ namespace JxlSharp.Base
         /// <param name="a">Left 3x3 matrix (9 elements, row-major).</param>
         /// <param name="b">Right 3x3 matrix (9 elements, row-major).</param>
         /// <param name="c">Output 3x3 matrix (9 elements, row-major).</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Matrix(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c)
         {
             Span<double> temp = stackalloc double[3];
@@ -47,6 +49,7 @@ namespace JxlSharp.Base
         /// <param name="a">Left 3x3 matrix (9 elements, row-major).</param>
         /// <param name="b">Right 3x3 matrix (9 elements, row-major).</param>
         /// <param name="c">Output 3x3 matrix (9 elements, row-major).</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Matrix(ReadOnlySpan<double> a, ReadOnlySpan<double> b, Span<double> c)
         {
             Span<double> temp = stackalloc double[3];
@@ -74,6 +77,7 @@ namespace JxlSharp.Base
         /// <param name="a">3x3 matrix (9 elements, row-major).</param>
         /// <param name="b">Input 3-element vector.</param>
         /// <param name="c">Output 3-element vector.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Vector(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> c)
         {
             for (int y = 0; y < 3; y++)
@@ -96,6 +100,7 @@ namespace JxlSharp.Base
         /// <param name="a">3x3 matrix (9 elements, row-major).</param>
         /// <param name="b">Input 3-element vector.</param>
         /// <param name="c">Output 3-element vector.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Vector(ReadOnlySpan<double> a, ReadOnlySpan<double> b, Span<double> c)
         {
             for (int y = 0; y < 3; y++)
@@ -184,6 +189,7 @@ namespace JxlSharp.Base
         /// <param name="a">Left 3x3 matrix.</param>
         /// <param name="b">Right 3x3 matrix.</param>
         /// <param name="c">Output 3x3 matrix.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Matrix(in Matrix3x3 a, in Matrix3x3 b, out Matrix3x3 c)
         {
             Span<float> sa = stackalloc float[9];
@@ -202,6 +208,7 @@ namespace JxlSharp.Base
         /// <param name="a">Left 3x3 double matrix.</param>
         /// <param name="b">Right 3x3 double matrix.</param>
         /// <param name="c">Output 3x3 double matrix.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Matrix(in Matrix3x3d a, in Matrix3x3d b, out Matrix3x3d c)
         {
             Span<double> sa = stackalloc double[9];
@@ -220,6 +227,7 @@ namespace JxlSharp.Base
         /// <param name="a">3x3 matrix.</param>
         /// <param name="b">Input 3-element vector.</param>
         /// <param name="c">Output 3-element vector.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Vector(in Matrix3x3 a, in Vector3 b, out Vector3 c)
         {
             Span<float> sa = stackalloc float[9];
@@ -237,6 +245,7 @@ namespace JxlSharp.Base
         /// <param name="a">3x3 double matrix.</param>
         /// <param name="b">Input 3-element double vector.</param>
         /// <param name="c">Output 3-element double vector.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Mul3x3Vector(in Matrix3x3d a, in Vector3d b, out Vector3d c)
         {
             Span<double> sa = stackalloc double[9];
@@ -313,6 +322,7 @@ namespace JxlSharp.Base
         /// <param name="v0">First element.</param>
         /// <param name="v1">Second element.</param>
         /// <param name="v2">Third element.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Vector3(float v0, float v1, float v2)
         {
             V0 = v0;
@@ -374,6 +384,7 @@ namespace JxlSharp.Base
         /// <param name="v0">First element.</param>
         /// <param name="v1">Second element.</param>
         /// <param name="v2">Third element.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Vector3d(double v0, double v1, double v2)
         {
             V0 = v0;
@@ -435,6 +446,7 @@ namespace JxlSharp.Base
         /// <param name="r0">Row 0.</param>
         /// <param name="r1">Row 1.</param>
         /// <param name="r2">Row 2.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Matrix3x3(Vector3 r0, Vector3 r1, Vector3 r2)
         {
             R0 = r0;
@@ -480,6 +492,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="span">9-element row-major span.</param>
         /// <returns>Constructed <see cref="Matrix3x3"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Matrix3x3 FromSpan(ReadOnlySpan<float> span)
         {
             return new Matrix3x3(
@@ -492,6 +505,7 @@ namespace JxlSharp.Base
         /// Copies the 9 matrix elements in row-major order into <paramref name="destination"/>.
         /// </summary>
         /// <param name="destination">Destination span of length at least 9.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void CopyTo(Span<float> destination)
         {
             destination[0] = R0.V0;
@@ -526,6 +540,7 @@ namespace JxlSharp.Base
         /// <param name="r0">Row 0.</param>
         /// <param name="r1">Row 1.</param>
         /// <param name="r2">Row 2.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Matrix3x3d(Vector3d r0, Vector3d r1, Vector3d r2)
         {
             R0 = r0;
@@ -571,6 +586,7 @@ namespace JxlSharp.Base
         /// </summary>
         /// <param name="span">9-element row-major span.</param>
         /// <returns>Constructed <see cref="Matrix3x3d"/>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Matrix3x3d FromSpan(ReadOnlySpan<double> span)
         {
             return new Matrix3x3d(
@@ -583,6 +599,7 @@ namespace JxlSharp.Base
         /// Copies the 9 matrix elements in row-major order into <paramref name="destination"/>.
         /// </summary>
         /// <param name="destination">Destination span of length at least 9.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void CopyTo(Span<double> destination)
         {
             destination[0] = R0.V0;

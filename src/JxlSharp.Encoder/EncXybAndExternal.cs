@@ -95,6 +95,7 @@ namespace JxlSharp.Encoder
         /// <param name="row2">Channel 2 (in: linear B, out: B).</param>
         /// <param name="premulAbsorb">Premultiplied absorbance array from <see cref="ComputePremulAbsorb"/>.</param>
         /// <param name="xsize">Number of pixels in the row.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void LinearRGBRowToXYB(
             Span<float> row0,
             Span<float> row1,
@@ -141,6 +142,7 @@ namespace JxlSharp.Encoder
         /// <param name="y">Row index within <paramref name="srcRect"/>.</param>
         /// <param name="premulAbsorb">Premultiplied absorbance array.</param>
         /// <param name="xyb">Destination XYB image.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvertRowToXyb(
             bool hasRgba,
             bool isLinear,
@@ -316,6 +318,7 @@ namespace JxlSharp.Encoder
         /// <param name="row1">Y plane row.</param>
         /// <param name="row2">B plane row.</param>
         /// <param name="xsize">Number of pixels in the row.</param>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void ScaleXYBRow(Span<float> row0, Span<float> row1, Span<float> row2, nuint xsize)
         {
             for (nuint x = 0; x < xsize; ++x)
@@ -394,6 +397,7 @@ namespace JxlSharp.Encoder
                 "RgbToYcbcr");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void RgbRowToYcbcr(
             ReadOnlySpan<float> rRow,
             ReadOnlySpan<float> gRow,

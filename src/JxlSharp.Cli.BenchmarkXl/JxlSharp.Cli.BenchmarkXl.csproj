@@ -3,6 +3,11 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>benchmark_xl</AssemblyName>
     <RootNamespace>JxlSharp.Cli.BenchmarkXl</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <IlcInstructionSet>native</IlcInstructionSet>
+    <EventSourceSupport>true</EventSourceSupport>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
     <Description>JPEG XL codec benchmark command-line tool (benchmark_xl).</Description>
   </PropertyGroup>
   <ItemGroup>

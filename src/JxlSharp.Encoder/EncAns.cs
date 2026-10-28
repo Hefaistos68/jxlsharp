@@ -413,6 +413,7 @@ namespace JxlSharp.Encoder
             return transposed;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static uint MaxSpanValue(ReadOnlySpan<uint> values)
         {
             uint max = 0;
@@ -885,6 +886,7 @@ namespace JxlSharp.Encoder
         /// <param name="uintConfig">Configuration to write.</param>
         /// <param name="writer">Destination bit writer.</param>
         /// <param name="logAlphaSize">Log2 of alphabet size.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void EncodeUintConfig(HybridUintConfig uintConfig, BitWriter writer, nuint logAlphaSize)
         {
             writer.Write((nuint)Bits.CeilLog2Nonzero(logAlphaSize + 1), uintConfig.SplitExponent);
@@ -906,6 +908,7 @@ namespace JxlSharp.Encoder
         /// <param name="uintConfig">Configuration to size.</param>
         /// <param name="writer">Size accumulator.</param>
         /// <param name="logAlphaSize">Log2 of alphabet size.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void EncodeUintConfig(HybridUintConfig uintConfig, ref SizeWriter writer, nuint logAlphaSize)
         {
             writer.Write((nuint)Bits.CeilLog2Nonzero(logAlphaSize + 1), uintConfig.SplitExponent);
@@ -1087,6 +1090,7 @@ namespace JxlSharp.Encoder
         /// <param name="contextOffset">Base context offset in <see cref="EntropyEncodingData.ContextMap"/>.</param>
         /// <param name="writer">Destination bit writer.</param>
         /// <returns>Number of extra bits written.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static nuint WriteTokens(
             IReadOnlyList<Token> tokens,
             EntropyEncodingData codes,
@@ -1145,6 +1149,7 @@ namespace JxlSharp.Encoder
         /// <param name="cfg">Hybrid integer config.</param>
         /// <param name="outTokens">Output token buffer.</param>
         /// <returns>Total extra bits.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint EstimateTokenCost(
             ReadOnlySpan<uint> values,
             HybridUintConfig cfg,
@@ -1162,6 +1167,7 @@ namespace JxlSharp.Encoder
             return extraBits;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void StoreVarLenUint8(nuint n, BitWriter writer)
         {
             Debug.Assert(n <= 255);
@@ -1179,6 +1185,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void StoreVarLenUint8(nuint n, ref SizeWriter writer)
         {
             Debug.Assert(n <= 255);
@@ -1196,6 +1203,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void StoreVarLenUint16(nuint n, BitWriter writer)
         {
             Debug.Assert(n <= 65535);
@@ -1213,6 +1221,7 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void StoreVarLenUint16(nuint n, ref SizeWriter writer)
         {
             Debug.Assert(n <= 65535);
@@ -1481,6 +1490,7 @@ namespace JxlSharp.Encoder
                 });
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static nuint WritePrefixTokens(
             IReadOnlyList<Token> tokens,
             EntropyEncodingData codes,
@@ -1512,6 +1522,7 @@ namespace JxlSharp.Encoder
             return numExtraBits;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static nuint WriteAnsTokens(
             IReadOnlyList<Token> tokens,
             EntropyEncodingData codes,
@@ -2033,6 +2044,7 @@ namespace JxlSharp.Encoder
                 return MathF.ScaleB((float)histo.TotalCount * flatBits, -31);
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private static uint SmallestIncrementLog(uint count, uint shift)
             {
                 if (count == 0)
@@ -2380,8 +2392,10 @@ namespace JxlSharp.Encoder
                     _writer = writer;
                 }
 
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void Write(nuint numBits, ulong bits) => _writer.Write(numBits, bits);
 
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void StoreVarLenUint8(nuint n) => EncAns.StoreVarLenUint8(n, _writer);
             }
 
@@ -2394,8 +2408,10 @@ namespace JxlSharp.Encoder
                     Writer = writer;
                 }
 
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void Write(nuint numBits, ulong bits) => Writer.Write(numBits, bits);
 
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void StoreVarLenUint8(nuint n) => EncAns.StoreVarLenUint8(n, ref Writer);
             }
         }
