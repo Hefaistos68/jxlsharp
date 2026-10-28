@@ -3,7 +3,7 @@
     <RootNamespace>JxlSharp</RootNamespace>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>JxlSharp</PackageId>
-    <Version>0.13.0</Version>
+    <Version>0.14.0</Version>
     <IsPackable>true</IsPackable>
     <Description>Pure C#/.NET implementation of JPEG XL (libjxl) with both a simple default-parameter codec interface and an extended full-parameter codec interface.</Description>
     <PackageTags>jxl;jpeg-xl;jpegxl;libjxl;image;codec;encoder;decoder;vardct;modular;lossless</PackageTags>
