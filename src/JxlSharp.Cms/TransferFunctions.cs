@@ -245,6 +245,27 @@ namespace JxlSharp.Cms
         }
 
         /// <summary>
+        /// Evaluates the inverse HLG EOTF for a 8-lane vector (maximum error 5e-7).
+        /// </summary>
+        /// <param name="x">Normalized linear display light vector.</param>
+        /// <returns>Encoded value vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> EncodedFromDisplay(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            Vector256<float> belowInv12 = Vector256.LessThanOrEqual(x, Vector256.Create((float)KInv12));
+            Vector256<float> lo         = Vector256.Sqrt(Vector256.Create(K3) * x);
+            Vector256<float> logArg     = (Vector256.Create(12.0f) * x) + Vector256.Create((float)(-KB));
+            Vector256<float> hi         = (Vector256.Create((float)(KA * Common.kInvLog2e)) * FastMath.FastLog2f(logArg)) + Vector256.Create((float)KC);
+            Vector256<float> magnitude  = Vector256.ConditionalSelect(belowInv12, lo, hi);
+
+            return Vector256.AndNot(magnitude, signMask) | originalSign;
+        }
+
+        /// <summary>
         /// Evaluates the HLG EOTF for a single float.
         /// </summary>
         /// <param name="x">Encoded value.</param>
@@ -273,6 +294,26 @@ namespace JxlSharp.Cms
             Vector128<float> magnitude = Vector128.ConditionalSelect(below05, lo, hi);
 
             return Vector128.AndNot(magnitude, signMask) | originalSign;
+        }
+
+        /// <summary>
+        /// Evaluates the HLG EOTF for a 8-lane vector.
+        /// </summary>
+        /// <param name="x">Encoded value vector.</param>
+        /// <returns>Normalized linear display light vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> DisplayFromEncoded(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            Vector256<float> below05   = Vector256.LessThanOrEqual(x, Vector256.Create(K05));
+            Vector256<float> lo        = x * (x * Vector256.Create(KInv3));
+            Vector256<float> hi        = (FastMath.FastPow2f(x * Vector256.Create(KHiPow)) * Vector256.Create(KHiMul)) + Vector256.Create(KHiAdd);
+            Vector256<float> magnitude = Vector256.ConditionalSelect(below05, lo, hi);
+
+            return Vector256.AndNot(magnitude, signMask) | originalSign;
         }
     }
 
@@ -337,6 +378,21 @@ namespace JxlSharp.Cms
         }
 
         /// <summary>
+        /// Evaluates SIMD BT.709 OETF (maximum error 1e-6).
+        /// </summary>
+        /// <param name="x">Linear light vector.</param>
+        /// <returns>BT.709 encoded vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> EncodedFromDisplay(Vector256<float> x)
+        {
+            Vector256<float> low  = Vector256.Create((float)KMulLow) * x;
+            Vector256<float> hi   = (Vector256.Create((float)KMulHi) * FastMath.FastPowf(x, Vector256.Create((float)KPowHi))) + Vector256.Create((float)KSub);
+            Vector256<float> mask = Vector256.LessThanOrEqual(x, Vector256.Create((float)KThresh));
+
+            return Vector256.ConditionalSelect(mask, low, hi);
+        }
+
+        /// <summary>
         /// Evaluates single-precision BT.709 EOTF.
         /// </summary>
         /// <param name="x">BT.709 encoded value.</param>
@@ -360,6 +416,21 @@ namespace JxlSharp.Cms
             Vector128<float> mask = Vector128.LessThan(x, Vector128.Create(KInvThresh));
 
             return Vector128.ConditionalSelect(mask, low, hi);
+        }
+
+        /// <summary>
+        /// Evaluates SIMD BT.709 EOTF.
+        /// </summary>
+        /// <param name="x">BT.709 encoded vector.</param>
+        /// <returns>Linear light vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> DisplayFromEncoded(Vector256<float> x)
+        {
+            Vector256<float> low  = Vector256.Create(KInvMulLow) * x;
+            Vector256<float> hi   = FastMath.FastPowf((x * Vector256.Create(KInvMulHi)) + Vector256.Create(KInvAdd), Vector256.Create(KInvPowHi));
+            Vector256<float> mask = Vector256.LessThan(x, Vector256.Create(KInvThresh));
+
+            return Vector256.ConditionalSelect(mask, low, hi);
         }
     }
 
@@ -477,6 +548,27 @@ namespace JxlSharp.Cms
         }
 
         /// <summary>
+        /// Evaluates SIMD PQ EOTF (maximum error 3e-6).
+        /// </summary>
+        /// <param name="x">PQ encoded vector.</param>
+        /// <returns>Normalized linear display light vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> DisplayFromEncoded(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            // 4-over-4-degree rational polynomial approximation on x+x*x. This improves
+            // the maximum error by about 5x over a rational polynomial for x.
+            Vector256<float> xpxx      = (x * x) + x;
+            Vector256<float> magnitude = RationalPolynomial.EvalRationalPolynomial(xpxx, DisplayP, DisplayQ);
+            Vector256<float> scaled    = magnitude * Vector256.Create(_displayScalingFactorFrom10000Nits);
+
+            return Vector256.AndNot(scaled, signMask) | originalSign;
+        }
+
+        /// <summary>
         /// Evaluates single-precision inverse PQ EOTF (maximum error 7e-7).
         /// </summary>
         /// <param name="x">Normalized linear display light.</param>
@@ -517,6 +609,28 @@ namespace JxlSharp.Cms
             Vector128<float> magnitude = Vector128.ConditionalSelect(Vector128.LessThan(x, Vector128.Create(1e-4f)), lo, hi);
 
             return Vector128.AndNot(magnitude, signMask) | originalSign;
+        }
+
+        /// <summary>
+        /// Evaluates SIMD inverse PQ EOTF (maximum error 7e-7).
+        /// </summary>
+        /// <param name="x">Normalized linear display light vector.</param>
+        /// <returns>PQ encoded vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> EncodedFromDisplay(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            // 4-over-4-degree rational polynomial approximation on x**0.25, with two
+            // different polynomials above and below 1e-4.
+            Vector256<float> xto025    = Vector256.Sqrt(Vector256.Sqrt(x * Vector256.Create(_displayScalingFactorTo10000Nits)));
+            Vector256<float> lo        = RationalPolynomial.EvalRationalPolynomial(xto025, EncodedPLo, EncodedQLo);
+            Vector256<float> hi        = RationalPolynomial.EvalRationalPolynomial(xto025, EncodedPHi, EncodedQHi);
+            Vector256<float> magnitude = Vector256.ConditionalSelect(Vector256.LessThan(x, Vector256.Create(1e-4f)), lo, hi);
+
+            return Vector256.AndNot(magnitude, signMask) | originalSign;
         }
     }
 
@@ -579,6 +693,20 @@ namespace JxlSharp.Cms
             0x51, 0xd1, 0xeb, 0xf2, 0x0,  0xb7, 0x4,  0xd,
         };
 
+        private static readonly Vector256<uint> FastSrgbMulLow = CreateFastSrgbMultipliers(0);
+        private static readonly Vector256<uint> FastSrgbMulHigh = CreateFastSrgbMultipliers(8);
+
+        private static Vector256<uint> CreateFastSrgbMultipliers(int offset)
+        {
+            Span<uint> bits = stackalloc uint[8];
+            for (int lane = 0; lane < bits.Length; lane++)
+            {
+                bits[lane] = ((uint)K2To512Powers25To18Bits[offset + lane] << 18) |
+                             ((uint)K2To512Powers17To10Bits[offset + lane] << 10) | 0x40000000u;
+            }
+            return Vector256.Create(bits);
+        }
+
         /// <summary>
         /// Linear to sRGB conversion with error of at most 1.2e-4 (scalar).
         /// </summary>
@@ -628,6 +756,27 @@ namespace JxlSharp.Cms
                 FastLinearToSrgb(v.GetElement(3)));
         }
 
+        /// <summary>Converts eight linear samples to sRGB using the scalar approximation's coefficients and exponent table.</summary>
+        /// <param name="v">Linear input samples.</param>
+        /// <returns>sRGB encoded samples.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> FastLinearToSrgb(Vector256<float> v)
+        {
+            Vector256<uint> bits = v.AsUInt32();
+            Vector256<float> reduced = ((bits | Vector256.Create(0x3e800000u)) & Vector256.Create(0x3effffffu)).AsSingle();
+            Vector256<float> d1 = (reduced * Vector256.Create(0.059914046f)) - Vector256.Create(0.108894556f);
+            Vector256<float> d2 = (d1 * reduced) + Vector256.Create(0.107963754f);
+            Vector256<float> pow = (d2 * reduced) + Vector256.Create(0.018092343f);
+            Vector256<uint> exponent = (Vector256.ShiftRightLogical(bits, 23) - Vector256.Create(118u)) & Vector256.Create(15u);
+            Vector256<uint> index = exponent & Vector256.Create(7u);
+            Vector256<uint> low = Vector256.Shuffle(FastSrgbMulLow, index);
+            Vector256<uint> high = Vector256.Shuffle(FastSrgbMulHigh, index);
+            Vector256<float> mul = Vector256.ConditionalSelect(Vector256.LessThan(exponent, Vector256.Create(8u)), low, high).AsSingle();
+            return Vector256.ConditionalSelect(Vector256.LessThan(v, Vector256.Create(0.0031308f)),
+                v * Vector256.Create(12.92f), (pow * mul) - Vector256.Create(0.055f));
+        }
+
+
         /// <summary>
         /// Evaluates single-precision sRGB EOTF.
         /// </summary>
@@ -671,6 +820,28 @@ namespace JxlSharp.Cms
         }
 
         /// <summary>
+        /// Evaluates SIMD sRGB EOTF.
+        /// </summary>
+        /// <param name="x">sRGB encoded vector.</param>
+        /// <returns>Linear light vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> DisplayFromEncoded(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            Vector256<float> linear    = x * Vector256.Create(KLowDivInv);
+            Vector256<float> poly      = RationalPolynomial.EvalRationalPolynomial(x, DisplayP, DisplayQ);
+            Vector256<float> magnitude = Vector256.ConditionalSelect(
+                Vector256.GreaterThan(x, Vector256.Create(KThreshSrgbToLinear)),
+                poly,
+                linear);
+
+            return Vector256.AndNot(magnitude, signMask) | originalSign;
+        }
+
+        /// <summary>
         /// Evaluates single-precision inverse sRGB EOTF (error ~5e-7).
         /// </summary>
         /// <param name="x">Linear light value.</param>
@@ -710,6 +881,28 @@ namespace JxlSharp.Cms
                 linear);
 
             return Vector128.AndNot(magnitude, signMask) | originalSign;
+        }
+
+        /// <summary>
+        /// Evaluates SIMD inverse sRGB EOTF (error ~5e-7).
+        /// </summary>
+        /// <param name="x">Linear light vector.</param>
+        /// <returns>sRGB encoded vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Vector256<float> EncodedFromDisplay(Vector256<float> x)
+        {
+            Vector256<float> signMask     = Vector256.Create(0x80000000u).AsSingle();
+            Vector256<float> originalSign = x & signMask;
+            x = Vector256.AndNot(x, signMask); // abs
+
+            Vector256<float> linear    = x * Vector256.Create(KLowDiv);
+            Vector256<float> poly      = RationalPolynomial.EvalRationalPolynomial(Vector256.Sqrt(x), EncodedP, EncodedQ);
+            Vector256<float> magnitude = Vector256.ConditionalSelect(
+                Vector256.GreaterThan(x, Vector256.Create(KThreshLinearToSrgb)),
+                poly,
+                linear);
+
+            return Vector256.AndNot(magnitude, signMask) | originalSign;
         }
     }
 }

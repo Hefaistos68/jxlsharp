@@ -9,6 +9,8 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 
 namespace JxlSharp.Encoder
@@ -1405,6 +1407,98 @@ namespace JxlSharp.Encoder
             }
         }
 
+        // The predictor is independent across encoder input pixels. The 16-bit
+        // path wraps its predictor arithmetic, then widens the final subtraction
+        // before zigzag packing, exactly like the scalar implementation.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void ComputeResiduals(ReadOnlySpan<short> row, ReadOnlySpan<short> leftRow,
+            ReadOnlySpan<short> topRow, ReadOnlySpan<short> topLeftRow, Span<ushort> residuals)
+        {
+            if (Avx2.IsSupported && residuals.Length == KChunkSize && row.Length >= KChunkSize &&
+                leftRow.Length >= KChunkSize && topRow.Length >= KChunkSize && topLeftRow.Length >= KChunkSize)
+            {
+                Vector128<short> px = Vector128.Create(row);
+                Vector128<short> left = Vector128.Create(leftRow);
+                Vector128<short> top = Vector128.Create(topRow);
+                Vector128<short> topLeft = Vector128.Create(topLeftRow);
+                Vector128<short> ac = left - topLeft;
+                Vector128<short> ab = left - top;
+                Vector128<short> bc = top - topLeft;
+                Vector128<short> clamp = Vector128.ConditionalSelect(Vector128.LessThan(ab ^ bc, Vector128<short>.Zero), top, left);
+                Vector128<short> pred = Vector128.ConditionalSelect(Vector128.LessThan(ac ^ bc, Vector128<short>.Zero), ac + top, clamp);
+                Vector256<int> diff = Avx2.ConvertToVector256Int32(px) - Avx2.ConvertToVector256Int32(pred);
+                Vector256<uint> packed = (Vector256.ShiftLeft(diff, 1) ^ Vector256.ShiftRightArithmetic(diff, 31)).AsUInt32();
+                Vector128.Narrow(packed.GetLower(), packed.GetUpper()).CopyTo(residuals);
+                return;
+            }
+            for (int ix = 0; ix < residuals.Length; ix++)
+            {
+                short px = ix < row.Length ? row[ix] : (short)0;
+                short left = ix < leftRow.Length ? leftRow[ix] : (short)0;
+                short top = ix < topRow.Length ? topRow[ix] : (short)0;
+                short topLeft = ix < topLeftRow.Length ? topLeftRow[ix] : (short)0;
+                short ac = unchecked((short)(left - topLeft));
+                short ab = unchecked((short)(left - top));
+                short bc = unchecked((short)(top - topLeft));
+                short grad = unchecked((short)((ushort)ac + (ushort)top));
+                short clamp = (short)(ab ^ bc) < 0 ? top : left;
+                short pred = (short)(ac ^ bc) < 0 ? grad : clamp;
+                residuals[ix] = unchecked((ushort)PackSignedValue(px - pred));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void ComputeResiduals(ReadOnlySpan<int> row, ReadOnlySpan<int> leftRow,
+            ReadOnlySpan<int> topRow, ReadOnlySpan<int> topLeftRow, Span<uint> residuals)
+        {
+            if (Avx2.IsSupported && residuals.Length == KChunkSize && row.Length >= KChunkSize &&
+                leftRow.Length >= KChunkSize && topRow.Length >= KChunkSize && topLeftRow.Length >= KChunkSize)
+            {
+                Vector256<int> px = Vector256.Create(row);
+                Vector256<int> left = Vector256.Create(leftRow);
+                Vector256<int> top = Vector256.Create(topRow);
+                Vector256<int> topLeft = Vector256.Create(topLeftRow);
+                Vector256<int> ac = left - topLeft;
+                Vector256<int> ab = left - top;
+                Vector256<int> bc = top - topLeft;
+                Vector256<int> clamp = Vector256.ConditionalSelect(Vector256.LessThan(ab ^ bc, Vector256<int>.Zero), top, left);
+                Vector256<int> pred = Vector256.ConditionalSelect(Vector256.LessThan(ac ^ bc, Vector256<int>.Zero), ac + top, clamp);
+                Vector256<int> diff = px - pred;
+                (Vector256.ShiftLeft(diff, 1) ^ Vector256.ShiftRightArithmetic(diff, 31)).AsUInt32().CopyTo(residuals);
+                return;
+            }
+            for (int ix = 0; ix < residuals.Length; ix++)
+            {
+                int px = ix < row.Length ? row[ix] : 0;
+                int left = ix < leftRow.Length ? leftRow[ix] : 0;
+                int top = ix < topRow.Length ? topRow[ix] : 0;
+                int topLeft = ix < topLeftRow.Length ? topLeftRow[ix] : 0;
+                int ac = unchecked(left - topLeft);
+                int ab = unchecked(left - top);
+                int bc = unchecked(top - topLeft);
+                int grad = unchecked(ac + top);
+                int clamp = (ab ^ bc) < 0 ? top : left;
+                int pred = (ac ^ bc) < 0 ? grad : clamp;
+                residuals[ix] = PackSignedValue(unchecked(px - pred));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int CountZeroPrefix(ReadOnlySpan<ushort> residuals)
+        {
+            int prefix = 0;
+            while (prefix < residuals.Length && residuals[prefix] == 0) prefix++;
+            return prefix;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int CountZeroPrefix(ReadOnlySpan<uint> residuals)
+        {
+            int prefix = 0;
+            while (prefix < residuals.Length && residuals[prefix] == 0) prefix++;
+            return prefix;
+        }
+
         private sealed class RowEncoder16
         {
             private readonly FastLosslessPrefixCode _code;
@@ -1451,34 +1545,8 @@ namespace JxlSharp.Encoder
                 int n,
                 Span<ushort> residuals)
             {
-                int prefixSize         = 0;
-                int requiredPrefixSize = 0;
-
-                for (int ix = 0; ix < KChunkSize; ix++)
-                {
-                    short px      = ix < row.Length ? row[ix] : (short)0;
-                    short left    = ix < rowLeft.Length ? rowLeft[ix] : (short)0;
-                    short top     = ix < rowTop.Length ? rowTop[ix] : (short)0;
-                    short topleft = ix < rowTopLeft.Length ? rowTopLeft[ix] : (short)0;
-                    short ac      = unchecked((short)(left - topleft));
-                    short ab      = unchecked((short)(left - top));
-                    short bc      = unchecked((short)(top - topleft));
-                    short grad    = unchecked((short)((ushort)ac + (ushort)top));
-                    short d       = (short)(ab ^ bc);
-                    short clamp   = d < 0 ? top : left;
-                    short s       = (short)(ac ^ bc);
-                    short pred    = s < 0 ? grad : clamp;
-                    residuals[ix] = unchecked((ushort)PackSignedValue(px - pred));
-
-                    if (prefixSize == requiredPrefixSize && residuals[ix] == 0)
-                    {
-                        prefixSize++;
-                    }
-
-                    requiredPrefixSize++;
-                }
-
-                prefixSize = Math.Min(n, prefixSize);
+                ComputeResiduals(row, rowLeft, rowTop, rowTopLeft, residuals.Slice(0, n));
+                int prefixSize = CountZeroPrefix(residuals.Slice(0, n));
 
                 if (prefixSize == n && (_run > 0 || prefixSize > FastLosslessPrefixCode.KLZ77MinLength))
                 {
@@ -1568,37 +1636,8 @@ namespace JxlSharp.Encoder
                 int n,
                 Span<uint> residuals)
             {
-                int prefixSize         = 0;
-                int requiredPrefixSize = 0;
-                bool use16BitPred      = false;
-
-                _ = use16BitPred;
-
-                for (int ix = 0; ix < KChunkSize; ix++)
-                {
-                    int px        = ix < row.Length ? row[ix] : 0;
-                    int left      = ix < rowLeft.Length ? rowLeft[ix] : 0;
-                    int top       = ix < rowTop.Length ? rowTop[ix] : 0;
-                    int topleft   = ix < rowTopLeft.Length ? rowTopLeft[ix] : 0;
-                    int ac        = unchecked(left - topleft);
-                    int ab        = unchecked(left - top);
-                    int bc        = unchecked(top - topleft);
-                    int grad      = unchecked((int)((uint)ac + (uint)top));
-                    int d         = ab ^ bc;
-                    int clamp     = d < 0 ? top : left;
-                    int s         = ac ^ bc;
-                    int pred      = s < 0 ? grad : clamp;
-                    residuals[ix] = PackSignedValue(unchecked(px - pred));
-
-                    if (prefixSize == requiredPrefixSize && residuals[ix] == 0)
-                    {
-                        prefixSize++;
-                    }
-
-                    requiredPrefixSize++;
-                }
-
-                prefixSize = Math.Min(n, prefixSize);
+                ComputeResiduals(row, rowLeft, rowTop, rowTopLeft, residuals.Slice(0, n));
+                int prefixSize = CountZeroPrefix(residuals.Slice(0, n));
 
                 if (prefixSize == n && (_run > 0 || prefixSize > FastLosslessPrefixCode.KLZ77MinLength))
                 {

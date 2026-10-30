@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
 
@@ -868,31 +869,54 @@ namespace JxlSharp.Encoder
             WeightedState wpState = new WeightedState(wpHeader, channel.W, channel.H);
             Span<int> properties  = stackalloc int[1];
 
-            for (nuint y = 0; y < channel.H; y++)
+            int start = tokens.Count;
+            int count = checked((int)(channel.W * channel.H));
+            tokens.EnsureCapacity(checked(start + count));
+            CollectionsMarshal.SetCount(tokens, start + count);
+            Span<Token> output = CollectionsMarshal.AsSpan(tokens).Slice(start, count);
+            int written = 0;
+            // Reserve once, then append without List.Add's per-pixel count/capacity checks.
+            // On a failure keep exactly the prefix that the scalar encoder would append.
+            try
             {
-                ReadOnlySpan<int> r     = channel.ConstRow(y);
-                ReadOnlySpan<int> rTop  = y > 0 ? channel.ConstRow(y - 1u) : r;
-                ReadOnlySpan<int> rTop2 = y > 1 ? channel.ConstRow(y - 2u) : rTop;
-
-                for (int x = 0; x < (int)channel.W; x++)
+                for (nuint y = 0; y < channel.H; y++)
                 {
-                    NeighborPixels neighbors = ModularPredictors.GatherNeighbors(r, rTop, rTop2, x, (int)y);
-                    long pred                = wpState.Predict((nuint)x, y, channel.W, in neighbors, properties, 0, computeProperties: true);
-                    int idx                  = TreeLut.KPropRangeFast + Math.Clamp(properties[0], -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
-                    long residual            = r[x] - (pred + offsets[idx]);
-                    sbyte mul                = multipliers[idx];
+                    ReadOnlySpan<int> r     = channel.ConstRow(y);
+                    ReadOnlySpan<int> rTop  = y > 0 ? channel.ConstRow(y - 1u) : r;
+                    ReadOnlySpan<int> rTop2 = y > 1 ? channel.ConstRow(y - 2u) : rTop;
 
-                    if (residual % mul != 0)
+                    for (int x = 0; x < (int)channel.W; x++)
                     {
-                        return Status.Failure("Invalid multiplier in WP LUT modular encoding");
+                        NeighborPixels neighbors = ModularPredictors.GatherNeighbors(r, rTop, rTop2, x, (int)y);
+                        long pred                = wpState.Predict((nuint)x, y, channel.W, in neighbors, properties, 0, computeProperties: true);
+                        int idx                  = TreeLut.KPropRangeFast + Math.Clamp(properties[0], -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                        long residual            = r[x] - (pred + offsets[idx]);
+                        sbyte mul                = multipliers[idx];
+
+                        if (mul != 1)
+                        {
+                            // Compute the quotient once instead of issuing both remainder and division.
+                            long quotient = residual / mul;
+                            if (quotient * mul != residual)
+                            {
+                                return Status.Failure("Invalid multiplier in WP LUT modular encoding");
+                            }
+
+                            residual = quotient;
+                        }
+
+                        output[written] = new Token(contextLookup[idx], PackSigned.Pack((int)residual));
+                        written++;
+                        wpState.UpdateErrors(r[x], (nuint)x, y, channel.W);
                     }
-
-                    tokens.Add(new Token(contextLookup[idx], PackSigned.Pack((int)(residual / mul))));
-                    wpState.UpdateErrors(r[x], (nuint)x, y, channel.W);
                 }
-            }
 
-            return true;
+                return true;
+            }
+            finally
+            {
+                CollectionsMarshal.SetCount(tokens, start + written);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]

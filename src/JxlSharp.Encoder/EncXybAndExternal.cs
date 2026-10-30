@@ -8,6 +8,9 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 using JxlSharp.Cms;
 using JxlSharp.Decoder;
@@ -113,7 +116,45 @@ namespace JxlSharp.Encoder
                 ? premulAbsorb[14]
                 : -MathF.Cbrt(premulAbsorb[11]);
 
-            for (nuint x = 0; x < xsize; ++x)
+            nuint x = 0;
+            // FMA keeps the Newton iterations identical to the scalar approximation.
+            if (Avx2.IsSupported && Fma.IsSupported)
+            {
+                Vector256<float> a0 = Vector256.Create(premulAbsorb[0]);
+                Vector256<float> a1 = Vector256.Create(premulAbsorb[1]);
+                Vector256<float> a2 = Vector256.Create(premulAbsorb[2]);
+                Vector256<float> a3 = Vector256.Create(premulAbsorb[3]);
+                Vector256<float> a4 = Vector256.Create(premulAbsorb[4]);
+                Vector256<float> a5 = Vector256.Create(premulAbsorb[5]);
+                Vector256<float> a6 = Vector256.Create(premulAbsorb[6]);
+                Vector256<float> a7 = Vector256.Create(premulAbsorb[7]);
+                Vector256<float> a8 = Vector256.Create(premulAbsorb[8]);
+                Vector256<float> a9 = Vector256.Create(premulAbsorb[9]);
+                Vector256<float> a10 = Vector256.Create(premulAbsorb[10]);
+                Vector256<float> a11 = Vector256.Create(premulAbsorb[11]);
+                Vector256<float> bias0 = Vector256.Create(negBias0);
+                Vector256<float> bias1 = Vector256.Create(negBias1);
+                Vector256<float> bias2 = Vector256.Create(negBias2);
+                Vector256<float> half = Vector256.Create(0.5f);
+                for (; x + 8 <= xsize; x += 8)
+                {
+                    int ix = (int)x;
+                    Vector256<float> r = Vector256.LoadUnsafe(ref row0[ix]);
+                    Vector256<float> g = Vector256.LoadUnsafe(ref row1[ix]);
+                    Vector256<float> b = Vector256.LoadUnsafe(ref row2[ix]);
+                    Vector256<float> m0 = Vector256.Max(Vector256<float>.Zero, (((a0 * r) + (a1 * g)) + (a2 * b)) + a9);
+                    Vector256<float> m1 = Vector256.Max(Vector256<float>.Zero, (((a3 * r) + (a4 * g)) + (a5 * b)) + a10);
+                    Vector256<float> m2 = Vector256.Max(Vector256<float>.Zero, (((a6 * r) + (a7 * g)) + (a8 * b)) + a11);
+                    Vector256<float> c0 = FastMath.CubeRootAndAdd(m0, bias0);
+                    Vector256<float> c1 = FastMath.CubeRootAndAdd(m1, bias1);
+                    Vector256<float> c2 = FastMath.CubeRootAndAdd(m2, bias2);
+                    (half * (c0 - c1)).StoreUnsafe(ref row0[ix]);
+                    (half * (c0 + c1)).StoreUnsafe(ref row1[ix]);
+                    c2.StoreUnsafe(ref row2[ix]);
+                }
+            }
+
+            for (; x < xsize; ++x)
             {
                 int ix  = (int)x;
                 float r = row0[ix];
@@ -567,13 +608,25 @@ namespace JxlSharp.Encoder
             nuint bytesPerPixel = spec.PixelFormat.NumChannels * bytesPerSample;
             nuint rowStride     = ComputeRowStride(spec.XSize, bytesPerPixel, spec.RowStride, spec.PixelFormat.Align);
 
+            // Keep short rows on the compact scalar path: mask setup is not amortized.
+            bool packedSimd = Avx2.IsSupported && spec.XSize >= 16 &&
+                (spec.PixelFormat.NumChannels >= 1 && spec.PixelFormat.NumChannels <= 4) &&
+                (spec.PixelFormat.DataType == JxlDataType.UInt8 || spec.PixelFormat.DataType == JxlDataType.UInt16 || spec.PixelFormat.DataType == JxlDataType.Float16 || spec.PixelFormat.DataType == JxlDataType.Float);
+
+            bool special = spec.PixelFormat.NumChannels <= 2 || spec.PixelFormat.DataType == JxlDataType.Float16;
             for (nuint y = 0; y < spec.YSize; ++y)
             {
-                int rowOffset             = (int)((y * rowStride) + (spec.ChannelIndex * bytesPerSample));
+                int rowOffset             = (int)(y * rowStride + (packedSimd ? 0 : spec.ChannelIndex * bytesPerSample));
                 ReadOnlySpan<byte> srcRow = bytes.Slice(rowOffset);
                 Span<float> dstRow        = outPlane.Row(y);
 
-                ConvertExternalRow(srcRow, spec.XSize, bytesPerPixel, in spec, dstRow);
+                if (packedSimd)
+                {
+                    if (special)
+                        ConvertExternalRowSpecial(srcRow, spec.XSize, bytesPerPixel, in spec, dstRow);
+                    else ConvertExternalRow(srcRow, spec.XSize, bytesPerPixel, in spec, dstRow);
+                }
+                else ConvertExternalRowScalar(srcRow, spec.XSize, bytesPerPixel, in spec, dstRow);
             }
 
             return true;
@@ -908,6 +961,148 @@ namespace JxlSharp.Encoder
                 ? (float)(1.0 / ((1UL << (int)spec.BitsPerSample) - 1UL))
                 : (float)(1.0 / uint.MaxValue);
 
+            int sampleBytes = (int)GetBytesPerSample(spec.PixelFormat.DataType, spec.BitsPerSample);
+            int channels = (int)spec.PixelFormat.NumChannels;
+            nuint x = 0;
+            bool isFloat = spec.PixelFormat.DataType == JxlDataType.Float;
+            if (Avx2.IsSupported && (channels == 3 || channels == 4) && xsize >= 16)
+            {
+                if (spec.PixelFormat.DataType == JxlDataType.UInt8)
+                {
+                    PixelPacking.ByteChannelMasks(channels, (int)spec.ChannelIndex, out Vector128<byte> lowMask, out Vector128<byte> highMask);
+                    for (; x + 8 <= xsize; x += 8)
+                    {
+                        ReadOnlySpan<byte> packed = srcRow.Slice((int)(x * bytesPerPixel));
+                        PixelPacking.LoadByteChannel(packed, channels, lowMask, highMask, invMax).CopyTo(dstRow.Slice((int)x, 8));
+                    }
+                }
+                else if (isFloat || spec.PixelFormat.DataType == JxlDataType.UInt16)
+                {
+                    Vector256<int> offsets = Vector256.Create(0, channels, 2 * channels, 3 * channels, 4 * channels, 5 * channels, 6 * channels, 7 * channels) + Vector256.Create((int)spec.ChannelIndex);
+                    Vector256<int> index = offsets & Vector256.Create(7);
+                    Vector256<int> block = Vector256.ShiftRightLogical(offsets, 3);
+                    Vector256<float> mask1 = Vector256.Equals(block, Vector256.Create(1)).AsSingle();
+                    Vector256<float> mask2 = Vector256.Equals(block, Vector256.Create(2)).AsSingle();
+                    Vector256<float> mask3 = Vector256.Equals(block, Vector256.Create(3)).AsSingle();
+                    for (; x + 8 <= xsize; x += 8)
+                    {
+                        ReadOnlySpan<byte> packed = srcRow.Slice((int)(x * bytesPerPixel));
+                        Vector256<float> p0 = PixelPacking.LoadSamples(packed, isFloat, littleEndian, invMax);
+                        Vector256<float> p1 = PixelPacking.LoadSamples(packed.Slice(8 * sampleBytes), isFloat, littleEndian, invMax);
+                        Vector256<float> p2 = PixelPacking.LoadSamples(packed.Slice(16 * sampleBytes), isFloat, littleEndian, invMax);
+                        Vector256<float> selected = Avx2.PermuteVar8x32(p0, index);
+                        selected = Vector256.ConditionalSelect(mask1, Avx2.PermuteVar8x32(p1, index), selected);
+                        selected = Vector256.ConditionalSelect(mask2, Avx2.PermuteVar8x32(p2, index), selected);
+                        if (channels == 4)
+                        {
+                            Vector256<float> p3 = PixelPacking.LoadSamples(packed.Slice(24 * sampleBytes), isFloat, littleEndian, invMax);
+                            selected = Vector256.ConditionalSelect(mask3, Avx2.PermuteVar8x32(p3, index), selected);
+                        }
+                        selected.CopyTo(dstRow.Slice((int)x, 8));
+                    }
+                }
+            }
+            if (x == xsize) return;
+            srcRow = srcRow.Slice((int)(x * bytesPerPixel + spec.ChannelIndex * (nuint)sampleBytes));
+            dstRow = dstRow.Slice((int)x);
+            xsize -= x;
+
+            ConvertExternalRowScalar(srcRow, xsize, bytesPerPixel, in spec, dstRow);
+        }
+
+        private static void ConvertExternalRowSpecial(
+            ReadOnlySpan<byte> srcRow,
+            nuint xsize,
+            nuint bytesPerPixel,
+            in ExternalBufferSpec spec,
+            Span<float> dstRow)
+        {
+            bool littleEndian = IsLittleEndian(spec.PixelFormat.Endianness);
+            float invMax      = spec.BitsPerSample < 32
+                ? (float)(1.0 / ((1UL << (int)spec.BitsPerSample) - 1UL))
+                : (float)(1.0 / uint.MaxValue);
+
+            int sampleBytes = (int)GetBytesPerSample(spec.PixelFormat.DataType, spec.BitsPerSample);
+            int channels = (int)spec.PixelFormat.NumChannels;
+            nuint x = 0;
+            bool isFloat = spec.PixelFormat.DataType == JxlDataType.Float;
+            bool isHalf = spec.PixelFormat.DataType == JxlDataType.Float16;
+            if (channels == 1 && isFloat && littleEndian == BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.Cast<byte, float>(srcRow.Slice(0, checked((int)xsize * 4))).CopyTo(dstRow);
+                return;
+            }
+            if (Avx2.IsSupported && channels >= 1 && channels <= 4 && xsize >= 16)
+            {
+                if (spec.PixelFormat.DataType == JxlDataType.UInt8)
+                {
+                    Vector128<byte> lowMask = default, highMask = default;
+                    if (channels >= 3) PixelPacking.ByteChannelMasks(channels, (int)spec.ChannelIndex, out lowMask, out highMask);
+                    else if (channels == 2) lowMask = Vector128.Create((byte)0,2,4,6,8,10,12,14,128,128,128,128,128,128,128,128) + Vector128.Create((byte)spec.ChannelIndex);
+                    for (; x + 8 <= xsize; x += 8)
+                    {
+                        ReadOnlySpan<byte> packed = srcRow.Slice((int)(x * bytesPerPixel));
+                        Vector256<float> value;
+                        if (channels >= 3) value = PixelPacking.LoadByteChannel(packed, channels, lowMask, highMask, invMax);
+                        else
+                        {
+                            Vector128<byte> selected = channels == 1 ? Vector128.CreateScalar(BinaryPrimitives.ReadUInt64LittleEndian(packed)).AsByte() : Ssse3.Shuffle(Vector128.Create(packed.Slice(0, 16)), lowMask);
+                            value = Vector256.ConvertToSingle(Avx2.ConvertToVector256Int32(selected)) * Vector256.Create(invMax);
+                        }
+                        value.CopyTo(dstRow.Slice((int)x, 8));
+                    }
+                }
+                else if (isFloat || isHalf || spec.PixelFormat.DataType == JxlDataType.UInt16)
+                {
+                    Vector256<int> offsets = Vector256.Create(0, channels, 2 * channels, 3 * channels, 4 * channels, 5 * channels, 6 * channels, 7 * channels) + Vector256.Create((int)spec.ChannelIndex);
+                    Vector256<int> index = offsets & Vector256.Create(7);
+                    Vector256<int> block = Vector256.ShiftRightLogical(offsets, 3);
+                    Vector256<float> mask1 = Vector256.Equals(block, Vector256.Create(1)).AsSingle();
+                    Vector256<float> mask2 = Vector256.Equals(block, Vector256.Create(2)).AsSingle();
+                    Vector256<float> mask3 = Vector256.Equals(block, Vector256.Create(3)).AsSingle();
+                    for (; x + 8 <= xsize; x += 8)
+                    {
+                        ReadOnlySpan<byte> packed = srcRow.Slice((int)(x * bytesPerPixel));
+                        Vector256<float> p0 = isHalf ? PixelPacking.LoadU16(packed, littleEndian).AsSingle() : PixelPacking.LoadSamples(packed, isFloat, littleEndian, invMax);
+                        Vector256<float> selected = channels == 1 ? p0 : Avx2.PermuteVar8x32(p0, index);
+                        if (channels >= 2)
+                        {
+                            ReadOnlySpan<byte> next = packed.Slice(8 * sampleBytes);
+                            Vector256<float> p1 = isHalf ? PixelPacking.LoadU16(next, littleEndian).AsSingle() : PixelPacking.LoadSamples(next, isFloat, littleEndian, invMax);
+                            selected = Vector256.ConditionalSelect(mask1, Avx2.PermuteVar8x32(p1, index), selected);
+                        }
+                        if (channels >= 3)
+                        {
+                            ReadOnlySpan<byte> next = packed.Slice(16 * sampleBytes);
+                            Vector256<float> p2 = isHalf ? PixelPacking.LoadU16(next, littleEndian).AsSingle() : PixelPacking.LoadSamples(next, isFloat, littleEndian, invMax);
+                            selected = Vector256.ConditionalSelect(mask2, Avx2.PermuteVar8x32(p2, index), selected);
+                        }
+                        if (channels == 4)
+                        {
+                            ReadOnlySpan<byte> next = packed.Slice(24 * sampleBytes);
+                            Vector256<float> p3 = isHalf ? PixelPacking.LoadU16(next, littleEndian).AsSingle() : PixelPacking.LoadSamples(next, isFloat, littleEndian, invMax);
+                            selected = Vector256.ConditionalSelect(mask3, Avx2.PermuteVar8x32(p3, index), selected);
+                        }
+                        if (isHalf) selected = PixelPacking.HalfToFloat(selected.AsUInt32());
+                        selected.CopyTo(dstRow.Slice((int)x, 8));
+                    }
+                }
+            }
+            if (x == xsize) return;
+            srcRow = srcRow.Slice((int)(x * bytesPerPixel + spec.ChannelIndex * (nuint)sampleBytes));
+            dstRow = dstRow.Slice((int)x);
+            xsize -= x;
+
+            ConvertExternalRowScalar(srcRow, xsize, bytesPerPixel, in spec, dstRow);
+        }
+
+        private static void ConvertExternalRowScalar(ReadOnlySpan<byte> srcRow, nuint xsize, nuint bytesPerPixel,
+            in ExternalBufferSpec spec, Span<float> dstRow)
+        {
+            bool littleEndian = IsLittleEndian(spec.PixelFormat.Endianness);
+            float invMax = spec.BitsPerSample < 32
+                ? (float)(1.0 / ((1UL << (int)spec.BitsPerSample) - 1UL))
+                : (float)(1.0 / uint.MaxValue);
             switch (spec.PixelFormat.DataType)
             {
                 case JxlDataType.UInt8:

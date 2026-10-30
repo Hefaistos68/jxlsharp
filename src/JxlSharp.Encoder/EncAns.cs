@@ -8,6 +8,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
 
@@ -1097,12 +1098,26 @@ namespace JxlSharp.Encoder
             nuint contextOffset,
             BitWriter writer)
         {
-            if (codes.UsePrefixCode)
+            if (tokens is List<Token> list && tokens.GetType() == typeof(List<Token>))
             {
-                return WritePrefixTokens(tokens, codes, contextOffset, writer);
+                return WriteTokenSource(new SpanTokenInput(CollectionsMarshal.AsSpan(list)), codes, contextOffset, writer);
             }
 
-            return WriteAnsTokens(tokens, codes, contextOffset, writer);
+            if (tokens is Token[] array)
+            {
+                return WriteTokenSource(new SpanTokenInput(array), codes, contextOffset, writer);
+            }
+
+            return WriteTokenSource(new ListTokenInput(tokens), codes, contextOffset, writer);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static nuint WriteTokenSource<T>(T input, EntropyEncodingData codes, nuint contextOffset, BitWriter writer)
+            where T : ITokenInput, allows ref struct
+        {
+            return codes.UsePrefixCode
+                ? WritePrefixTokens(input, codes, contextOffset, writer)
+                : WriteAnsTokens(input, codes, contextOffset, writer);
         }
 
         /// <summary>
@@ -1491,17 +1506,18 @@ namespace JxlSharp.Encoder
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private static nuint WritePrefixTokens(
-            IReadOnlyList<Token> tokens,
+        private static nuint WritePrefixTokens<T>(
+            T input,
             EntropyEncodingData codes,
             nuint contextOffset,
             BitWriter writer)
+            where T : ITokenInput, allows ref struct
         {
             nuint numExtraBits = 0;
 
-            for (int i = 0; i < tokens.Count; i++)
+            for (int i = 0; i < input.Count; i++)
             {
-                Token token          = tokens[i];
+                Token token          = input[i];
                 int histo            = codes.ContextMap[(int)contextOffset + (int)token.Context];
                 HybridUintConfig cfg = token.IsLz77Length
                     ? codes.Lz77.LengthUintConfig
@@ -1523,16 +1539,19 @@ namespace JxlSharp.Encoder
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private static nuint WriteAnsTokens(
-            IReadOnlyList<Token> tokens,
+        private static nuint WriteAnsTokens<T>(
+            T input,
             EntropyEncodingData codes,
             nuint contextOffset,
             BitWriter writer)
+            where T : ITokenInput, allows ref struct
         {
             nuint numExtraBits = 0;
-            int maxWords       = (tokens.Count * 2) + 1;
+            // Each token contributes at most 31 extra + 16 renormalization bits.
+            // After a flush its two pieces fit in one 56-bit chunk, so at most
+            // one chunk is flushed per token.
+            int maxWords       = Math.Max(1, input.Count);
             ulong[] outWords   = ArrayPool<ulong>.Shared.Rent(maxWords);
-            byte[] outNbits    = ArrayPool<byte>.Shared.Rent(maxWords);
             int outCount       = 0;
 
             try
@@ -1542,9 +1561,9 @@ namespace JxlSharp.Encoder
                 ANSCoder ans     = ANSCoder.Create();
                 bool multiOrLz77 = codes.Lz77.Enabled || codes.ContextMap.Length > 1;
 
-                for (int i = tokens.Count - 1; i >= 0; i--)
+                for (int i = input.Count - 1; i >= 0; i--)
                 {
-                    Token token = tokens[i];
+                    Token token = input[i];
                     int histo   = multiOrLz77 ? codes.ContextMap[(int)contextOffset + (int)token.Context] : 0;
                     HybridUintConfig cfg = multiOrLz77 && token.IsLz77Length
                         ? codes.Lz77.LengthUintConfig
@@ -1557,10 +1576,10 @@ namespace JxlSharp.Encoder
                     }
 
                     ANSEncSymbolInfo info = codes.EncodingInfo[histo][tok];
-                    AddReversedBits(bits, nbits, outWords, outNbits, ref outCount, ref allbits, ref numallbits);
+                    AddReversedBits(bits, nbits, outWords, ref outCount, ref allbits, ref numallbits);
                     numExtraBits += nbits;
                     uint ansBits  = ans.PutSymbol(info, out byte ansNbits);
-                    AddReversedBits(ansBits, ansNbits, outWords, outNbits, ref outCount, ref allbits, ref numallbits);
+                    AddReversedBits(ansBits, ansNbits, outWords, ref outCount, ref allbits, ref numallbits);
                 }
 
                 writer.Write(32, ans.GetState());
@@ -1568,7 +1587,8 @@ namespace JxlSharp.Encoder
 
                 for (int i = outCount - 1; i >= 0; i--)
                 {
-                    writer.Write(outNbits[i], outWords[i]);
+                    ulong chunk = outWords[i];
+                    writer.Write((nuint)(chunk >> 56), chunk & 0x00FFFFFFFFFFFFFFUL);
                 }
 
                 return numExtraBits;
@@ -1576,7 +1596,33 @@ namespace JxlSharp.Encoder
             finally
             {
                 ArrayPool<ulong>.Shared.Return(outWords);
-                ArrayPool<byte>.Shared.Return(outNbits);
+            }
+        }
+
+        private interface ITokenInput
+        {
+            int Count { get; }
+            Token this[int index] { get; }
+        }
+
+        private readonly ref struct SpanTokenInput(ReadOnlySpan<Token> tokens) : ITokenInput
+        {
+            private readonly ReadOnlySpan<Token> _tokens = tokens;
+            public int Count => _tokens.Length;
+            public Token this[int index]
+            {
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                get => _tokens[index];
+            }
+        }
+
+        private readonly struct ListTokenInput(IReadOnlyList<Token> tokens) : ITokenInput
+        {
+            public int Count => tokens.Count;
+            public Token this[int index]
+            {
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                get => tokens[index];
             }
         }
 
@@ -1585,7 +1631,6 @@ namespace JxlSharp.Encoder
             ulong bits,
             nuint nbits,
             ulong[] outWords,
-            byte[] outNbits,
             ref int outCount,
             ref ulong allbits,
             ref nuint numallbits)
@@ -1597,8 +1642,7 @@ namespace JxlSharp.Encoder
 
             if (numallbits + nbits > BitWriter.KMaxBitsPerCall)
             {
-                outWords[outCount] = allbits;
-                outNbits[outCount] = (byte)numallbits;
+                outWords[outCount] = allbits | ((ulong)numallbits << 56);
                 outCount++;
                 numallbits = 0;
                 allbits    = 0;

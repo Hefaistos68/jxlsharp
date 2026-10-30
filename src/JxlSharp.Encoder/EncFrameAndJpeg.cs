@@ -246,6 +246,8 @@ namespace JxlSharp.Encoder
             JxlMemoryManager mm)
         {
             float[]? scratchMem = null;
+            int maxArea = MaxTransformArea(shared.AcStrategy,
+                new Rect(0, 0, (int)shared.FrameDim.XSizeBlocks, (int)shared.FrameDim.YSizeBlocks));
 
             Status runOk = DataParallel.RunOnPool(
                 pool,
@@ -253,15 +255,15 @@ namespace JxlSharp.Encoder
                 (uint)shared.FrameDim.YSizeBlocks,
                 numThreads =>
                 {
-                    scratchMem = new float[numThreads * 5 * AcStrategy.kMaxCoeffArea];
+                    scratchMem = new float[checked((int)numThreads * 5 * maxArea)];
 
                     return true;
                 },
                 (by, threadId) =>
                 {
-                    int threadOffset        = (int)(threadId * 5 * AcStrategy.kMaxCoeffArea);
-                    Span<float> coeffBlock  = scratchMem.AsSpan(threadOffset, (int)AcStrategy.kMaxCoeffArea);
-                    Span<float> scratchSpan = scratchMem.AsSpan(threadOffset + (int)AcStrategy.kMaxCoeffArea, (int)(4 * AcStrategy.kMaxCoeffArea));
+                    int threadOffset        = (int)threadId * 5 * maxArea;
+                    Span<float> coeffBlock  = scratchMem.AsSpan(threadOffset, maxArea);
+                    Span<float> scratchSpan = scratchMem.AsSpan(threadOffset + maxArea, 4 * maxArea);
                     ExtractDcBlockRow(opsin, rect, dc, shared, by, coeffBlock, scratchSpan);
 
                     return Status.OkStatus;
@@ -271,6 +273,24 @@ namespace JxlSharp.Encoder
             _ = mm;
 
             return runOk;
+        }
+
+        // Scan the actual map: public encoder stages may be called before UsedAcs is updated.
+        internal static int MaxTransformArea(AcStrategyImage strategies, Rect blockRect)
+        {
+            nuint maxArea = FrameDimensions.kDCTBlockSize;
+            for (nuint y = 0; y < (nuint)blockRect.YSize; y++)
+            {
+                AcStrategyRow row = strategies.ConstRow(blockRect, y);
+                for (nuint x = 0; x < (nuint)blockRect.XSize; x++)
+                {
+                    AcStrategy acs = row[x];
+                    if (!acs.IsFirstBlock()) continue;
+                    nuint area = acs.CoveredBlocksX() * acs.CoveredBlocksY() * FrameDimensions.kDCTBlockSize;
+                    maxArea = Math.Max(maxArea, area);
+                }
+            }
+            return (int)maxArea;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -796,7 +816,7 @@ namespace JxlSharp.Encoder
             _ = dc;
             PassesSharedState shared = encState.Shared;
             Rect blockGroupRect      = shared.FrameDim.BlockGroupRect(groupIdx);
-            int maxArea              = (int)AcStrategy.kMaxCoeffArea;
+            int maxArea              = EncCache.MaxTransformArea(shared.AcStrategy, blockGroupRect);
 
             float[] floatScratch  = ArrayPool<float>.Shared.Rent(8 * maxArea);
             int[] qblockScratch   = ArrayPool<int>.Shared.Rent(3 * maxArea);

@@ -25,7 +25,7 @@ namespace JxlSharp.Encoder
     public class EncXybAndExternalTests
     {
         /// <summary>
-        /// Verifies that <see cref="EncXyb.CubeRootAndAdd"/> and <see cref="FastMath.CubeRootAndAdd"/>
+        /// Verifies that <see cref="EncXyb.CubeRootAndAdd"/> and <see cref="FastMath.CubeRootAndAdd(float, float)"/>
         /// produce finite deterministic cube-root results.
         /// </summary>
         [Test]

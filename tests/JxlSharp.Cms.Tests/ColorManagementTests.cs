@@ -80,8 +80,7 @@ namespace JxlSharp.Cms.Tests
         [Test]
         public void D2700ChromaticityAndToSrgb()
         {
-            string iccPath = @"p:\source\jxl#\libjxl\testdata\jxl\color_management\sRGB-D2700.icc";
-            byte[] iccData = File.ReadAllBytes(iccPath);
+            byte[] iccData = JxlSharp.TestLib.TestUtils.ReadTestData("jxl/color_management/sRGB-D2700.icc");
 
             CmsColorEncoding srgbD2700 = new CmsColorEncoding();
             srgbD2700.SetICC(iccData, JxlCms.GetDefaultCms()).IsOk.ShouldBeTrue();

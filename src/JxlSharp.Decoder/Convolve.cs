@@ -7,6 +7,8 @@
 
 using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -290,7 +292,36 @@ namespace JxlSharp.Decoder
                     long y             = task;
                     Span<float> rowOut = outRect.Row(output, (nuint)y);
 
-                    for (nuint x = 0; x < xsize; ++x)
+                    nuint x = 0;
+                    if (Avx2.IsSupported && !ReferenceEquals(input, output))
+                    {
+                        // Mirror against the entire input image, matching SlowSeparablePixel.
+                        long first = Math.Max(0, 2 - (long)inRect.X0);
+                        for (; x < xsize && (long)x < first; x++)
+                        {
+                            StatusOr<float> px = SlowSeparablePixel(input, inRect, (long)x, y, 2, weights);
+                            if (!px.IsOk) return px.Status;
+                            rowOut[(int)x] = px.Value;
+                        }
+                        for (; x + 8 <= xsize && (long)inRect.X0 + (long)x + 8 <= (long)input.XSize - 2; x += 8)
+                        {
+                            Vector256<float> sum = Vector256<float>.Zero;
+                            for (int dy = -2; dy <= 2; dy++)
+                            {
+                                long sy = ImageOps.Mirror((long)inRect.Y0 + y + dy, (long)input.YSize);
+                                ReadOnlySpan<float> source = input.ConstRow((nuint)sy);
+                                Vector256<float> wy = Vector256.Create(weights.Vert[Math.Abs(dy) * 4]);
+                                for (int dx = -2; dx <= 2; dx++)
+                                {
+                                    Vector256<float> wx = Vector256.Create(weights.Horz[Math.Abs(dx) * 4]);
+                                    sum += (Vector256.Create(source.Slice((int)inRect.X0 + (int)x + dx, 8)) * wx) * wy;
+                                }
+                            }
+                            sum.CopyTo(rowOut.Slice((int)x, 8));
+                        }
+                    }
+
+                    for (; x < xsize; ++x)
                     {
                         StatusOr<float> px = SlowSeparablePixel(input, inRect, (long)x, y, 2, weights);
 
