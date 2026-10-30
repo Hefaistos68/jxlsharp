@@ -8,6 +8,7 @@
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace JxlSharp.Base
 {
@@ -74,6 +75,26 @@ namespace JxlSharp.Base
         }
 
         /// <summary>
+        /// Computes base-2 logarithm over a 8-lane <see cref="Vector256{Single}"/>.
+        /// </summary>
+        /// <param name="x">8-lane positive float vector.</param>
+        /// <returns>Approximate base-2 logarithm vector.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> FastLog2f(Vector256<float> x)
+        {
+            Vector256<int> xBits      = x.AsInt32();
+            Vector256<int> expBits    = xBits - Vector256.Create(0x3f2aaaab);
+            Vector256<int> expShifted = Vector256.ShiftRightArithmetic(expBits, 23);
+            Vector256<float> mantissa = (xBits - Vector256.ShiftLeft(expShifted, 23)).AsSingle();
+            Vector256<float> expVal   = Vector256.ConvertToSingle(expShifted);
+
+            return RationalPolynomial.EvalRationalPolynomial(
+                mantissa - Vector256.Create(1.0f),
+                Log2P,
+                Log2Q) + expVal;
+        }
+
+        /// <summary>
         /// Computes 2^x with max relative error ~3e-7.
         /// </summary>
         /// <param name="x">Exponent value.</param>
@@ -124,6 +145,31 @@ namespace JxlSharp.Base
         }
 
         /// <summary>
+        /// Computes 2^x over a 8-lane <see cref="Vector256{Single}"/> with max relative error ~3e-7.
+        /// </summary>
+        /// <param name="x">8-lane exponent vector.</param>
+        /// <returns>Approximate value of <c>2^x</c> per lane.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> FastPow2f(Vector256<float> x)
+        {
+            Vector256<float> floorx  = Vector256.Floor(x);
+            Vector256<int> expBits   = Vector256.ShiftLeft(Vector256.ConvertToInt32(floorx) + Vector256.Create(127), 23);
+            Vector256<float> exp     = expBits.AsSingle();
+            Vector256<float> frac    = x - floorx;
+
+            Vector256<float> num = frac + Vector256.Create(1.01749063e+01f);
+            num                  = (num * frac) + Vector256.Create(4.88687798e+01f);
+            num                  = (num * frac) + Vector256.Create(9.85506591e+01f);
+            num                 *= exp;
+
+            Vector256<float> den = (frac * Vector256.Create(2.10242958e-01f)) + Vector256.Create(-2.22328856e-02f);
+            den                  = (den * frac) + Vector256.Create(-1.94414990e+01f);
+            den                  = (den * frac) + Vector256.Create(9.85506633e+01f);
+
+            return num / den;
+        }
+
+        /// <summary>
         /// Computes <c>baseVal^exponent</c> with max relative error ~3e-5.
         /// </summary>
         /// <param name="baseVal">Base value (positive).</param>
@@ -143,6 +189,18 @@ namespace JxlSharp.Base
         /// <returns>Approximate value of <c>baseVal^exponent</c> per lane.</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector128<float> FastPowf(Vector128<float> baseVal, Vector128<float> exponent)
+        {
+            return FastPow2f(FastLog2f(baseVal) * exponent);
+        }
+
+        /// <summary>
+        /// Computes <c>baseVal^exponent</c> over 8-lane <see cref="Vector256{Single}"/> vectors with max relative error ~3e-5.
+        /// </summary>
+        /// <param name="baseVal">Base value vector (positive).</param>
+        /// <param name="exponent">Exponent value vector.</param>
+        /// <returns>Approximate value of <c>baseVal^exponent</c> per lane.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> FastPowf(Vector256<float> baseVal, Vector256<float> exponent)
         {
             return FastPow2f(FastLog2f(baseVal) * exponent);
         }
@@ -259,6 +317,39 @@ namespace JxlSharp.Base
             r             = MathF.FusedMultiplyAdd(r2Final, x, add);
 
             return r;
+        }
+        /// <summary>Computes cbrt(x) + add for eight non-negative samples using the scalar algorithm's fused operations.</summary>
+        /// <param name="x">Non-negative input samples.</param>
+        /// <param name="add">Bias added to each cube root.</param>
+        /// <returns>Eight cube roots with the bias added.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> CubeRootAndAdd(Vector256<float> x, Vector256<float> add)
+        {
+            if (!Avx2.IsSupported || !Fma.IsSupported)
+            {
+                Vector256<float> result = Vector256<float>.Zero;
+                for (int lane = 0; lane < Vector256<float>.Count; lane++)
+                    result = result.WithElement(lane, CubeRootAndAdd(x.GetElement(lane), add.GetElement(lane)));
+                return result;
+            }
+
+            Vector256<float> oneThird = Vector256.Create(1.0f / 3.0f);
+            Vector256<float> fourThirds = Vector256.Create(4.0f / 3.0f);
+            Vector256<float> xa3 = oneThird * x;
+            Vector256<int> bits = x.AsInt32();
+            Vector256<int> estimate = Vector256.Create(0x54800000) -
+                (Vector256.ShiftRightArithmetic(bits, 23) * Vector256.Create(0x002AAAAA));
+            Vector256<float> r = Vector256.ConditionalSelect(Vector256.Equals(bits, Vector256<int>.Zero),
+                Vector256<int>.Zero, estimate).AsSingle();
+            for (int iteration = 0; iteration < 3; iteration++)
+            {
+                Vector256<float> r2 = r * r;
+                r = Fma.MultiplyAdd(-xa3, r2 * r2, fourThirds * r);
+            }
+            Vector256<float> square = r * r;
+            r = Fma.MultiplyAdd(oneThird, Fma.MultiplyAdd(-x, square * square, r), r);
+            square = r * r;
+            return Fma.MultiplyAdd(square, x, add);
         }
     }
 }

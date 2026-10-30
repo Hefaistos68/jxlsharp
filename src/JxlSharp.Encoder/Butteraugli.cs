@@ -22,6 +22,8 @@
 
 using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Threading;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
@@ -1839,24 +1841,51 @@ namespace JxlSharp.Encoder
         {
             int half = (int)offset;
 
-            for (nuint y = 0; y < inPlane.YSize; ++y)
+            nuint y = 0;
+            if (Avx2.IsSupported && !ReferenceEquals(inPlane, outPlane))
+            {
+                Span<float> tile = stackalloc float[64];
+                for (; y + 8 <= inPlane.YSize; y += 8)
+                {
+                    nuint x = border1;
+                    for (; x + 8 <= border2; x += 8)
+                    {
+                        for (int row = 0; row < 8; row++)
+                        {
+                            ReadOnlySpan<float> source = inPlane.ConstRow(y + (nuint)row);
+                            int startX = (int)x - half;
+                            Vector256<float> sum = Vector256.Create(source.Slice((int)x, 8)) * Vector256.Create(scaledKernel[half]);
+                            for (int i = 0; i < half; i++)
+                                sum += (Vector256.Create(source.Slice(startX + i, 8)) + Vector256.Create(source.Slice(startX + 2 * half - i, 8))) * Vector256.Create(scaledKernel[i]);
+                            sum.CopyTo(tile.Slice(row * 8, 8));
+                        }
+                        Transpose.Transpose8x8(tile, 8, outPlane.BackingArray.AsSpan(outPlane.RowOffset(x) + (int)y), (int)outPlane.PixelsPerRow);
+                    }
+                    for (; x < border2; x++)
+                        for (int row = 0; row < 8; row++)
+                            outPlane.Row(x)[(int)y + row] = ConvolveMiddlePixel(inPlane.ConstRow(y + (nuint)row), scaledKernel, (int)x, half);
+                }
+            }
+
+            for (; y < inPlane.YSize; ++y)
             {
                 ReadOnlySpan<float> rowIn = inPlane.ConstRow(y);
                 int iy                    = (int)y;
 
                 for (nuint x = border1; x < border2; ++x)
                 {
-                    int baseIdx = (int)x - half;
-                    float sum   = rowIn[baseIdx + half] * scaledKernel[half];
-
-                    for (int i = 0; i < half; ++i)
-                    {
-                        sum += (rowIn[baseIdx + i] + rowIn[baseIdx + (2 * half) - i]) * scaledKernel[i];
-                    }
-
-                    outPlane.Row(x)[iy] = sum;
+                    outPlane.Row(x)[iy] = ConvolveMiddlePixel(rowIn, scaledKernel, (int)x, half);
                 }
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ConvolveMiddlePixel(ReadOnlySpan<float> row, float[] kernel, int x, int half)
+        {
+            int start = x - half;
+            float sum = row[x] * kernel[half];
+            for (int i = 0; i < half; i++) sum += (row[start + i] + row[start + 2 * half - i]) * kernel[i];
+            return sum;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -2198,6 +2227,37 @@ namespace JxlSharp.Encoder
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector256<float> MaltaUnitLFVector(ReadOnlySpan<float> d, int centerIdx, int xs)
+        {
+            int xs2 = 2 * xs;
+            int xs3 = 3 * xs;
+            int xs4 = 4 * xs;
+            Vector256<float> c = Vector256.Create(d.Slice(centerIdx, 8));
+
+            Vector256<float> s0  = Vector256.Create(d.Slice(centerIdx - 4, 8)) + Vector256.Create(d.Slice(centerIdx - 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + 2, 8)) + Vector256.Create(d.Slice(centerIdx + 4, 8));
+            Vector256<float> s1  = Vector256.Create(d.Slice(centerIdx - xs4, 8)) + Vector256.Create(d.Slice(centerIdx - xs2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2, 8)) + Vector256.Create(d.Slice(centerIdx + xs4, 8));
+            Vector256<float> s2  = Vector256.Create(d.Slice(centerIdx - xs3 - 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 + 3, 8));
+            Vector256<float> s3  = Vector256.Create(d.Slice(centerIdx - xs3 + 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 - 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 - 3, 8));
+            Vector256<float> s4  = Vector256.Create(d.Slice(centerIdx - xs4 + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 - 1, 8));
+            Vector256<float> s5  = Vector256.Create(d.Slice(centerIdx - xs4 - 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 + 1, 8));
+            Vector256<float> s6  = Vector256.Create(d.Slice(centerIdx - 4 - xs, 8)) + Vector256.Create(d.Slice(centerIdx - 2 - xs, 8)) + c + Vector256.Create(d.Slice(centerIdx + 2 + xs, 8)) + Vector256.Create(d.Slice(centerIdx + 4 + xs, 8));
+            Vector256<float> s7  = Vector256.Create(d.Slice(centerIdx - 4 + xs, 8)) + Vector256.Create(d.Slice(centerIdx - 2 + xs, 8)) + c + Vector256.Create(d.Slice(centerIdx + 2 - xs, 8)) + Vector256.Create(d.Slice(centerIdx + 4 - xs, 8));
+            Vector256<float> s8  = Vector256.Create(d.Slice(centerIdx - xs3 - 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 + 2, 8));
+            Vector256<float> s9  = Vector256.Create(d.Slice(centerIdx - xs3 + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 - 2, 8));
+            Vector256<float> s10 = Vector256.Create(d.Slice(centerIdx - xs2 - 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 3, 8));
+            Vector256<float> s11 = Vector256.Create(d.Slice(centerIdx - xs2 + 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs - 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 - 3, 8));
+            Vector256<float> s12 = Vector256.Create(d.Slice(centerIdx + xs2 - 4, 8)) + Vector256.Create(d.Slice(centerIdx + xs - 2, 8)) + c + Vector256.Create(d.Slice(centerIdx - xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 4, 8));
+            Vector256<float> s13 = Vector256.Create(d.Slice(centerIdx - xs2 - 4, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 2, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 4, 8));
+            Vector256<float> s14 = Vector256.Create(d.Slice(centerIdx - xs4 - 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 + 2, 8));
+            Vector256<float> s15 = Vector256.Create(d.Slice(centerIdx - xs4 + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 - 2, 8));
+
+            return (s0 * s0) + (s1 * s1) + (s2 * s2) + (s3 * s3) +
+                   (s4 * s4) + (s5 * s5) + (s6 * s6) + (s7 * s7) +
+                   (s8 * s8) + (s9 * s9) + (s10 * s10) + (s11 * s11) +
+                   (s12 * s12) + (s13 * s13) + (s14 * s14) + (s15 * s15);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float MaltaUnitHF(ReadOnlySpan<float> d, int centerIdx, int xs)
         {
             int xs2 = 2 * xs;
@@ -2221,6 +2281,37 @@ namespace JxlSharp.Encoder
             float s13 = d[centerIdx - xs - 4] + d[centerIdx - xs - 3] + d[centerIdx - xs - 2] + d[centerIdx - 1] + c + d[centerIdx + 1] + d[centerIdx + xs + 2] + d[centerIdx + xs + 3] + d[centerIdx + xs + 4];
             float s14 = s5;
             float s15 = s4;
+
+            return (s0 * s0) + (s1 * s1) + (s2 * s2) + (s3 * s3) +
+                   (s4 * s4) + (s5 * s5) + (s6 * s6) + (s7 * s7) +
+                   (s8 * s8) + (s9 * s9) + (s10 * s10) + (s11 * s11) +
+                   (s12 * s12) + (s13 * s13) + (s14 * s14) + (s15 * s15);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector256<float> MaltaUnitHFVector(ReadOnlySpan<float> d, int centerIdx, int xs)
+        {
+            int xs2 = 2 * xs;
+            int xs3 = 3 * xs;
+            int xs4 = 4 * xs;
+            Vector256<float> c = Vector256.Create(d.Slice(centerIdx, 8));
+
+            Vector256<float> s0  = Vector256.Create(d.Slice(centerIdx - 4, 8)) + Vector256.Create(d.Slice(centerIdx - 3, 8)) + Vector256.Create(d.Slice(centerIdx - 2, 8)) + Vector256.Create(d.Slice(centerIdx - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + 1, 8)) + Vector256.Create(d.Slice(centerIdx + 2, 8)) + Vector256.Create(d.Slice(centerIdx + 3, 8)) + Vector256.Create(d.Slice(centerIdx + 4, 8));
+            Vector256<float> s1  = Vector256.Create(d.Slice(centerIdx - xs4, 8)) + Vector256.Create(d.Slice(centerIdx - xs3, 8)) + Vector256.Create(d.Slice(centerIdx - xs2, 8)) + Vector256.Create(d.Slice(centerIdx - xs, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs, 8)) + Vector256.Create(d.Slice(centerIdx + xs2, 8)) + Vector256.Create(d.Slice(centerIdx + xs3, 8)) + Vector256.Create(d.Slice(centerIdx + xs4, 8));
+            Vector256<float> s2  = Vector256.Create(d.Slice(centerIdx - xs3 - 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 + 3, 8));
+            Vector256<float> s3  = Vector256.Create(d.Slice(centerIdx - xs3 + 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 - 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 - 3, 8));
+            Vector256<float> s4  = Vector256.Create(d.Slice(centerIdx - xs4 + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs3 + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 - 1, 8));
+            Vector256<float> s5  = Vector256.Create(d.Slice(centerIdx - xs4 - 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs3 - 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs4 + 1, 8));
+            Vector256<float> s6  = Vector256.Create(d.Slice(centerIdx - 4 - xs, 8)) + Vector256.Create(d.Slice(centerIdx - 3 - xs, 8)) + Vector256.Create(d.Slice(centerIdx - 2 - xs, 8)) + Vector256.Create(d.Slice(centerIdx - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + 1, 8)) + Vector256.Create(d.Slice(centerIdx + 2 + xs, 8)) + Vector256.Create(d.Slice(centerIdx + 3 + xs, 8)) + Vector256.Create(d.Slice(centerIdx + 4 + xs, 8));
+            Vector256<float> s7  = Vector256.Create(d.Slice(centerIdx - 4 + xs, 8)) + Vector256.Create(d.Slice(centerIdx - 3 + xs, 8)) + Vector256.Create(d.Slice(centerIdx - 2 + xs, 8)) + Vector256.Create(d.Slice(centerIdx - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + 1, 8)) + Vector256.Create(d.Slice(centerIdx + 2 - xs, 8)) + Vector256.Create(d.Slice(centerIdx + 3 - xs, 8)) + Vector256.Create(d.Slice(centerIdx + 4 - xs, 8));
+            Vector256<float> s8  = Vector256.Create(d.Slice(centerIdx - xs3 - 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 + 2, 8));
+            Vector256<float> s9  = Vector256.Create(d.Slice(centerIdx - xs3 + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs2 + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs3 - 2, 8));
+            Vector256<float> s10 = Vector256.Create(d.Slice(centerIdx - xs2 - 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 + 3, 8));
+            Vector256<float> s11 = Vector256.Create(d.Slice(centerIdx - xs2 + 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + xs - 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs - 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs2 - 3, 8));
+            Vector256<float> s12 = Vector256.Create(d.Slice(centerIdx + xs - 4, 8)) + Vector256.Create(d.Slice(centerIdx + xs - 3, 8)) + Vector256.Create(d.Slice(centerIdx + xs - 2, 8)) + Vector256.Create(d.Slice(centerIdx - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + 1, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs + 4, 8));
+            Vector256<float> s13 = Vector256.Create(d.Slice(centerIdx - xs - 4, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 3, 8)) + Vector256.Create(d.Slice(centerIdx - xs - 2, 8)) + Vector256.Create(d.Slice(centerIdx - 1, 8)) + c + Vector256.Create(d.Slice(centerIdx + 1, 8)) + Vector256.Create(d.Slice(centerIdx + xs + 2, 8)) + Vector256.Create(d.Slice(centerIdx + xs + 3, 8)) + Vector256.Create(d.Slice(centerIdx + xs + 4, 8));
+            Vector256<float> s14 = s5;
+            Vector256<float> s15 = s4;
 
             return (s0 * s0) + (s1 * s1) + (s2 * s2) + (s3 * s3) +
                    (s4 * s4) + (s5 * s5) + (s6 * s6) + (s7 * s7) +
@@ -2314,7 +2405,17 @@ namespace JxlSharp.Encoder
                 ReadOnlySpan<float> row1 = lum1.ConstRow(y);
                 Span<float> rowDiffs     = diffs.Row(y);
 
-                for (nuint x = 0; x < lum0.XSize; ++x)
+                nuint x = 0;
+                if (Avx2.IsSupported)
+                {
+                    for (; x + 8 <= lum0.XSize; x += 8)
+                    {
+                        ComputeMaltaDiffVector(Vector128.Create(row0.Slice((int)x, 4)), Vector128.Create(row1.Slice((int)x, 4)), norm1, norm20Gt1, norm20Lt1).CopyTo(rowDiffs.Slice((int)x, 4));
+                        ComputeMaltaDiffVector(Vector128.Create(row0.Slice((int)x + 4, 4)), Vector128.Create(row1.Slice((int)x + 4, 4)), norm1, norm20Gt1, norm20Lt1).CopyTo(rowDiffs.Slice((int)x + 4, 4));
+                    }
+                }
+
+                for (; x < lum0.XSize; ++x)
                 {
                     int ix       = (int)x;
                     rowDiffs[ix] = ComputeSingleMaltaDiff(row0[ix], row1[ix], norm1, norm20Gt1, norm20Lt1);
@@ -2365,6 +2466,35 @@ namespace JxlSharp.Encoder
             return result;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector128<float> NarrowMask(Vector256<double> mask) =>
+            Vector128.Narrow(mask.GetLower().AsInt64(), mask.GetUpper().AsInt64()).AsSingle();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector128<float> ComputeMaltaDiffVector(Vector128<float> v0, Vector128<float> v1,
+            float norm1, float norm20Gt1, float norm20Lt1)
+        {
+            Vector128<float> absval = Vector128.Create(0.5f) * (Vector128.Abs(v0) + Vector128.Abs(v1));
+            Vector128<float> diff = v0 - v1;
+            Vector128<float> invDenom = Vector128.Create(1f) / (Vector128.Create(norm1) + absval);
+            Vector128<float> result = (Vector128.Create(norm20Gt1) * invDenom) * diff;
+            Vector256<double> scale = Avx.ConvertToVector256Double(Vector128.Create(norm20Lt1) * invDenom);
+            Vector256<double> d0 = Avx.ConvertToVector256Double(v0);
+            Vector256<double> d1 = Avx.ConvertToVector256Double(v1);
+            Vector256<double> tooSmall = Vector256.Create(0.55) * Vector256.Abs(d0);
+            Vector256<double> tooBig = Vector256.Create(1.05) * Vector256.Abs(d0);
+            Vector128<float> negative = Vector128.LessThan(v0, Vector128<float>.Zero);
+            Vector128<float> increase = Vector128.ConditionalSelect(negative,
+                NarrowMask(Vector256.LessThan(d1, -tooBig)), NarrowMask(Vector256.LessThan(d1, tooSmall)));
+            Vector128<float> decrease = Vector128.ConditionalSelect(negative,
+                NarrowMask(Vector256.GreaterThan(d1, -tooSmall)), NarrowMask(Vector256.GreaterThan(d1, tooBig)));
+            Vector128<float> inc = Avx.ConvertToVector128Single(scale * Vector256.ConditionalSelect(
+                Vector256.LessThan(d0, Vector256<double>.Zero), -d1 - tooBig, tooSmall - d1));
+            Vector128<float> dec = Avx.ConvertToVector128Single(scale * Vector256.ConditionalSelect(
+                Vector256.LessThan(d0, Vector256<double>.Zero), d1 + tooSmall, d1 - tooBig));
+            return Vector128.ConditionalSelect(decrease, result - dec, Vector128.ConditionalSelect(increase, result + inc, result));
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void AccumulateMaltaUnits(bool isLf, ImagePlane<float> diffs, ImagePlane<float> blockDiffAc)
         {
@@ -2375,7 +2505,20 @@ namespace JxlSharp.Encoder
             {
                 Span<float> rowDiff = blockDiffAc.Row(y0);
 
-                for (nuint x0 = 0; x0 < xsize; ++x0)
+                nuint x0 = 0;
+                if (Avx2.IsSupported && xsize >= 16 && ysize >= 9 && y0 >= 4 && y0 + 4 < ysize)
+                {
+                    for (; x0 < 4; x0++) rowDiff[(int)x0] += PaddedMaltaUnit(isLf, diffs, x0, y0);
+                    for (; x0 + 8 <= xsize - 4; x0 += 8)
+                    {
+                        int center = diffs.RowOffset(y0) + (int)x0;
+                        Vector256<float> value = isLf ? MaltaUnitLFVector(diffs.BackingArray, center, (int)diffs.PixelsPerRow)
+                            : MaltaUnitHFVector(diffs.BackingArray, center, (int)diffs.PixelsPerRow);
+                        (Vector256.Create(rowDiff.Slice((int)x0, 8)) + value).CopyTo(rowDiff.Slice((int)x0, 8));
+                    }
+                }
+
+                for (; x0 < xsize; ++x0)
                 {
                     rowDiff[(int)x0] += PaddedMaltaUnit(isLf, diffs, x0, y0);
                 }
@@ -2452,6 +2595,17 @@ namespace JxlSharp.Encoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void StoreMin3(Vector256<float> v, ref Vector256<float> min0, ref Vector256<float> min1, ref Vector256<float> min2)
+        {
+            Vector256<float> active = Vector256.LessThan(v, min2);
+            Vector256<float> first = active & Vector256.LessThan(v, min0);
+            Vector256<float> second = Vector256.AndNot(active, first) & Vector256.LessThan(v, min1);
+            min2 = Vector256.ConditionalSelect(first | second, min1, Vector256.ConditionalSelect(active, v, min2));
+            min1 = Vector256.ConditionalSelect(first, min0, Vector256.ConditionalSelect(second, v, min1));
+            min0 = Vector256.ConditionalSelect(first, v, min0);
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void FuzzyErosion(ImagePlane<float> fromPlane, ImagePlane<float> toPlane)
         {
@@ -2462,7 +2616,15 @@ namespace JxlSharp.Encoder
             {
                 Span<float> rowTo = toPlane.Row(y);
 
-                for (nuint x = 0; x < xsize; ++x)
+                nuint x = 0;
+                if (Avx2.IsSupported && xsize >= 14)
+                {
+                    for (; x < 3; x++) rowTo[(int)x] = FuzzyErodePixel(fromPlane, x, y, xsize, ysize);
+                    for (; x + 8 <= xsize - 3; x += 8)
+                        FuzzyErodeVector(fromPlane, x, y, xsize, ysize).CopyTo(rowTo.Slice((int)x, 8));
+                }
+
+                for (; x < xsize; ++x)
                 {
                     rowTo[(int)x] = FuzzyErodePixel(fromPlane, x, y, xsize, ysize);
                 }
@@ -2502,6 +2664,38 @@ namespace JxlSharp.Encoder
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector256<float> FuzzyErodeVector(ImagePlane<float> fromPlane, nuint x, nuint y, nuint xsize, nuint ysize)
+        {
+            const nuint kStep = 3;
+            int ix            = (int)x;
+            Vector256<float> min0        = Vector256.Create(fromPlane.ConstRow(y).Slice(ix, 8));
+            Vector256<float> min1        = Vector256.Create(2.0f) * min0;
+            Vector256<float> min2        = min1;
+
+            if (x >= kStep)
+            {
+                GatherVerticalMin3(fromPlane, x - kStep, y, ysize, kStep, ref min0, ref min1, ref min2);
+            }
+
+            if (x + kStep < xsize)
+            {
+                GatherVerticalMin3(fromPlane, x + kStep, y, ysize, kStep, ref min0, ref min1, ref min2);
+            }
+
+            if (y >= kStep)
+            {
+                StoreMin3(Vector256.Create(fromPlane.ConstRow(y - kStep).Slice(ix, 8)), ref min0, ref min1, ref min2);
+            }
+
+            if (y + kStep < ysize)
+            {
+                StoreMin3(Vector256.Create(fromPlane.ConstRow(y + kStep).Slice(ix, 8)), ref min0, ref min1, ref min2);
+            }
+
+            return (Vector256.Create(0.45f) * min0) + (Vector256.Create(0.3f) * min1) + (Vector256.Create(0.25f) * min2);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void GatherVerticalMin3(
             ImagePlane<float> fromPlane,
             nuint xCol,
@@ -2523,6 +2717,31 @@ namespace JxlSharp.Encoder
             if (y + kStep < ysize)
             {
                 StoreMin3(fromPlane.ConstRow(y + kStep)[ixCol], ref min0, ref min1, ref min2);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void GatherVerticalMin3(
+            ImagePlane<float> fromPlane,
+            nuint xCol,
+            nuint y,
+            nuint ysize,
+            nuint kStep,
+            ref Vector256<float> min0,
+            ref Vector256<float> min1,
+            ref Vector256<float> min2)
+        {
+            int ixCol = (int)xCol;
+            StoreMin3(Vector256.Create(fromPlane.ConstRow(y).Slice(ixCol, 8)), ref min0, ref min1, ref min2);
+
+            if (y >= kStep)
+            {
+                StoreMin3(Vector256.Create(fromPlane.ConstRow(y - kStep).Slice(ixCol, 8)), ref min0, ref min1, ref min2);
+            }
+
+            if (y + kStep < ysize)
+            {
+                StoreMin3(Vector256.Create(fromPlane.ConstRow(y + kStep).Slice(ixCol, 8)), ref min0, ref min1, ref min2);
             }
         }
 

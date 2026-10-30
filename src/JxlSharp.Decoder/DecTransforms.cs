@@ -397,13 +397,7 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Run(nuint rows, nuint cols, DctFrom from, DctTo to)
         {
-            for (nuint n = 0; n < rows; ++n)
-            {
-                for (nuint m = 0; m < cols; ++m)
-                {
-                    to.Write(from.Read(n, m), m, n);
-                }
-            }
+            Transpose.GenericTransposeBlock<float>(from.Data, (int)from.Stride, to.Data, (int)to.Stride, (int)rows, (int)cols);
         }
     }
 
@@ -411,7 +405,7 @@ namespace JxlSharp.Decoder
     /// Forward and inverse DCT, AFV corner-DCT, and VarDCT transform operations.
     /// Ported from <c>lib/jxl/dct-inl.h</c> and <c>lib/jxl/dec_transforms-inl.h</c>.
     /// </summary>
-    public static class DecTransforms
+    public static partial class DecTransforms
     {
         private static readonly float[][] Afv4x4Basis =
         {
@@ -541,6 +535,14 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Dct1D(int n, int m, DctFrom from, DctTo to, Span<float> tmp)
         {
+            if (System.Runtime.Intrinsics.X86.Avx2.IsSupported && System.Runtime.Intrinsics.X86.Fma.IsSupported &&
+                m >= 8 && (n == 4 || n == 8 || n == 16 || n == 32) && !from.Data.Overlaps(to.Data))
+            {
+                if (n == 8 && m == 8) Forward8BlockSimd(from, to);
+                else TransformColumnsSimd(n, m, from, to, false, tmp);
+                return;
+            }
+
             LoadFromBlock(n, m, from, tmp);
             Dct1DImpl(n, m, tmp, tmp.Slice(n * m));
             StoreToBlockAndScale(n, m, tmp, to);
@@ -558,6 +560,14 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Idct1D(int n, int m, DctFrom from, DctTo to, Span<float> tmp)
         {
+            if (System.Runtime.Intrinsics.X86.Avx2.IsSupported && System.Runtime.Intrinsics.X86.Fma.IsSupported &&
+                m >= 8 && (n == 4 || n == 8 || n == 16 || n == 32) && !from.Data.Overlaps(to.Data))
+            {
+                if (n == 8 && m == 8) Inverse8BlockSimd(from, to);
+                else TransformColumnsSimd(n, m, from, to, true, tmp);
+                return;
+            }
+
             Idct1DImpl(n, m, from.Data, (int)from.Stride, to.Data, (int)to.Stride, tmp);
         }
 

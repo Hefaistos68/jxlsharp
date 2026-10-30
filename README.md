@@ -60,6 +60,38 @@ The JXLSharp repository contains a nuget package with two interfaces, a simple a
 
 ---
 
+## Concurrent images
+
+`JxlEncodeOptions.NumThreads` and `JxlDecodeOptions.NumThreads` apply to each
+operation. Automatic threading on several simultaneous images can create a full
+worker pool for each image. Bound both the number of images in flight and the
+workers per image.
+
+This example uses an explicit batch budget as a starting point for tuning:
+
+```csharp
+// images is a JxlImageData[]; every result has its own buffer.
+var codec = new JxlSharpCodec();
+var encoded = new byte[images.Length][];
+int concurrentImages = Math.Min(4, Environment.ProcessorCount);
+int threadsPerImage = Math.Max(1, Environment.ProcessorCount / concurrentImages);
+
+Parallel.For(0, images.Length,
+    new ParallelOptions { MaxDegreeOfParallelism = concurrentImages },
+    i => encoded[i] = codec.Encode(images[i], new JxlEncodeOptions
+    {
+        Effort = 3,
+        Distance = 1,
+        NumThreads = threadsPerImage,
+    }));
+```
+
+The appropriate split depends on coding mode, dimensions, effort and the machine;
+the example is not a universal optimum. Do not mutate input images or options
+while their operations are running. Caller and runtime threads are additional
+to the configured codec workers. A reproducible comparison is available in
+[JxlSharp.ConcurrencyBench](benchmarks/JxlSharp.ConcurrencyBench/README.md).
+
 ## License
 
 This package is licensed under the SPDX license expression:

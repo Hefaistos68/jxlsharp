@@ -7,6 +7,7 @@
 // Site or repo: https://github.com/Hefaistos68
 
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
@@ -57,6 +58,18 @@ namespace JxlSharp.Extras
             List<byte>? jpegBytes = null,
             SizeConstraints? constraints = null)
         {
+            return DecodeImageJXLFromMemory(bytes.ToArray(), dparams, out decodedBytes, ppf, jpegBytes, constraints);
+        }
+
+        // The caller keeps this input stable until the synchronous decode completes.
+        internal static bool DecodeImageJXLFromMemory(
+            ReadOnlyMemory<byte> inputBytes,
+            JXLDecompressParams dparams,
+            out nuint decodedBytes,
+            PackedPixelFile ppf,
+            List<byte>? jpegBytes = null,
+            SizeConstraints? constraints = null)
+        {
             Status.ClearLastFailure();
             decodedBytes = 0;
             ppf.Frames.Clear();
@@ -67,8 +80,6 @@ namespace JxlSharp.Extras
             {
                 return false;
             }
-
-            byte[] inputBytes = bytes.ToArray();
 
             if (dec.SetInput(inputBytes) != JxlDecoderStatus.Success)
             {
@@ -616,31 +627,37 @@ namespace JxlSharp.Extras
 
         private static bool ReadCompressedOutput(JxlEncoder enc, out byte[] compressed)
         {
-            byte[] buffer          = new byte[4096];
+            byte[] buffer          = ArrayPool<byte>.Shared.Rent(4096);
             int offset             = 0;
             JxlEncoderStatus state = JxlEncoderStatus.NeedMoreOutput;
 
-            while (state == JxlEncoderStatus.NeedMoreOutput)
+            try
             {
-                state = enc.ProcessOutput(buffer.AsSpan(), ref offset);
-
-                if (state == JxlEncoderStatus.NeedMoreOutput)
+                while (state == JxlEncoderStatus.NeedMoreOutput)
                 {
-                    Array.Resize(ref buffer, buffer.Length * 2);
+                    state = enc.ProcessOutput(buffer.AsSpan(), ref offset);
+                    if (state == JxlEncoderStatus.NeedMoreOutput)
+                    {
+                        byte[] larger = ArrayPool<byte>.Shared.Rent(checked(buffer.Length * 2));
+                        buffer.AsSpan(0, offset).CopyTo(larger);
+                        ArrayPool<byte>.Shared.Return(buffer);
+                        buffer = larger;
+                    }
                 }
-            }
 
-            if (state != JxlEncoderStatus.Success)
+                if (state != JxlEncoderStatus.Success)
+                {
+                    compressed = Array.Empty<byte>();
+                    return false;
+                }
+
+                compressed = buffer.AsSpan(0, offset).ToArray();
+                return true;
+            }
+            finally
             {
-                compressed = Array.Empty<byte>();
-
-                return false;
+                ArrayPool<byte>.Shared.Return(buffer);
             }
-
-            compressed = new byte[offset];
-            Buffer.BlockCopy(buffer, 0, compressed, 0, offset);
-
-            return true;
         }
 
         private sealed class JxlDecodeLoopState

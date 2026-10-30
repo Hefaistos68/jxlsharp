@@ -221,6 +221,9 @@ namespace JxlSharp.Threads
                 {
                     Monitor.Wait(_stateMutex);
                 }
+
+                _func = null;
+                _jxlOpaque = null;
             }
 
             return ret;

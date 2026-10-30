@@ -25,21 +25,41 @@ namespace JxlSharp
     {
         private sealed class RunnerAdapter : IParallelRunner, IDisposable
         {
-            private readonly ThreadParallelRunner _runner;
+            private readonly int _workers;
+            private ThreadParallelRunner? _runner;
 
             public RunnerAdapter(int numThreads)
             {
-                int workers = numThreads <= 0 ? -1 : numThreads;
-                _runner     = new ThreadParallelRunner(workers);
+                _workers = numThreads <= 0 ? -1 : numThreads;
             }
 
-            public JxlParallelRunner? Runner => ThreadParallelRunner.Runner;
+            public JxlParallelRunner? Runner => Run;
 
-            public object? RunnerOpaque => _runner;
+            private static int Run(object? runner, object? opaque, JxlParallelRunInit init,
+                JxlParallelRunFunction func, uint begin, uint end)
+            {
+                if (begin > end) return DataParallel.ParallelRetRunnerError;
+                if (begin == end) return DataParallel.ParallelRetSuccess;
+
+                // A single group needs one scratch slot and no worker wake-up.
+                if (end - begin == 1)
+                {
+                    int result = init(opaque, 1);
+                    if (result == DataParallel.ParallelRetSuccess) func(opaque, begin, 0);
+                    return result;
+                }
+
+                var adapter = (RunnerAdapter)runner!;
+                // Avoid creating OS threads for operations containing only single-task ranges.
+                adapter._runner ??= new ThreadParallelRunner(adapter._workers);
+                return ThreadParallelRunner.RunnerWithTaskLimit(adapter._runner, opaque, init, func, begin, end);
+            }
+
+            public object? RunnerOpaque => this;
 
             public void Dispose()
             {
-                _runner.Dispose();
+                _runner?.Dispose();
             }
         }
 
@@ -82,7 +102,13 @@ namespace JxlSharp
         {
             JxlImageData image = JxlImageData.FromPixels(pixels, width, height, channels);
 
-            return Encode(image, quality, effort);
+            JxlEncodeOptions options = new JxlEncodeOptions
+            {
+                Quality = Math.Clamp(quality, 0.0f, 100.0f),
+                Lossless = quality >= 100.0f,
+                Effort = Math.Clamp(effort, 1, 11),
+            };
+            return Encode(image.ToPackedPixelFile(copyPixels: false), options, null);
         }
 
         /// <inheritdoc />
@@ -110,7 +136,8 @@ namespace JxlSharp
         {
             JxlImageData image = JxlImageData.FromPixels(pixels, width, height, channels);
 
-            return EncodeLossless(image, effort);
+            JxlEncodeOptions options = JxlEncodeOptions.CreateLossless(Math.Clamp(effort, 1, 11));
+            return Encode(image.ToPackedPixelFile(copyPixels: false), options, null);
         }
 
         /// <inheritdoc />
@@ -163,7 +190,8 @@ namespace JxlSharp
         /// <inheritdoc />
         public JxlImageData Decode(ReadOnlySpan<byte> jxlBytes)
         {
-            JxlDecodeResult result = Decode(jxlBytes, JxlDecodeOptions.CreateDefault());
+            if (jxlBytes.IsEmpty) throw new ArgumentException("Input JXL buffer must not be empty.", nameof(jxlBytes));
+            JxlDecodeResult result = DecodeCore(jxlBytes.ToArray(), JxlDecodeOptions.CreateDefault(), PrimaryImageHandling.TakePixels);
 
             if (result.PrimaryImage is null)
             {
@@ -180,13 +208,15 @@ namespace JxlSharp
 
             byte[] bytes = ReadStreamToBytes(inputStream);
 
-            return Decode(bytes);
+            if (bytes.Length == 0) throw new ArgumentException("Input JXL buffer must not be empty.", "jxlBytes");
+            JxlDecodeResult result = DecodeCore(bytes, JxlDecodeOptions.CreateDefault(), PrimaryImageHandling.TakePixels);
+            return result.PrimaryImage ?? throw new InvalidOperationException("Decoded JPEG XL image did not produce any pixel frames.");
         }
 
         /// <inheritdoc />
         public JxlImageData DecodeFile(string filePath)
         {
-            JxlDecodeResult result = DecodeFile(filePath, JxlDecodeOptions.CreateDefault());
+            JxlDecodeResult result = DecodeFileCore(filePath, JxlDecodeOptions.CreateDefault(), PrimaryImageHandling.TakePixels);
 
             if (result.PrimaryImage is null)
             {
@@ -306,6 +336,12 @@ namespace JxlSharp
                 throw new ArgumentException("Input JXL buffer must not be empty.", nameof(jxlBytes));
             }
 
+            return DecodeCore(jxlBytes.ToArray(), options, PrimaryImageHandling.Copy);
+        }
+
+        private static JxlDecodeResult DecodeCore(ReadOnlyMemory<byte> jxlBytes, JxlDecodeOptions options,
+            PrimaryImageHandling primaryImageHandling)
+        {
             JXLDecompressParams dparams = options.ToDecompressParams();
             using IDisposable? scope    = AttachParallelRunner(dparams, options.NumThreads);
             PackedPixelFile ppf         = new PackedPixelFile();
@@ -322,7 +358,7 @@ namespace JxlSharp
 
             ApplyAlphaBlendIfRequested(ppf, options.AlphaBlendBackground);
 
-            return new JxlDecodeResult(ppf, reconJpeg, consumed);
+            return new JxlDecodeResult(ppf, reconJpeg, consumed, primaryImageHandling);
         }
 
         /// <inheritdoc />
@@ -333,11 +369,18 @@ namespace JxlSharp
 
             byte[] bytes = ReadStreamToBytes(inputStream);
 
-            return Decode(bytes, options);
+            if (bytes.Length == 0) throw new ArgumentException("Input JXL buffer must not be empty.", "jxlBytes");
+            return DecodeCore(bytes, options, PrimaryImageHandling.Copy);
         }
 
         /// <inheritdoc />
         public JxlDecodeResult DecodeFile(string filePath, JxlDecodeOptions options)
+        {
+            return DecodeFileCore(filePath, options, PrimaryImageHandling.Copy);
+        }
+
+        private static JxlDecodeResult DecodeFileCore(string filePath, JxlDecodeOptions options,
+            PrimaryImageHandling primaryImageHandling)
         {
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             {
@@ -351,10 +394,11 @@ namespace JxlSharp
 
             if (codec == Codec.Jxl || codec == Codec.Unknown)
             {
-                return Decode(fileBytes, options);
+                if (fileBytes.Length == 0) throw new ArgumentException("Input JXL buffer must not be empty.", "jxlBytes");
+                return DecodeCore(fileBytes, options, primaryImageHandling);
             }
 
-            return DecodeExternalFormatBytes(fileBytes, options);
+            return DecodeExternalFormatBytes(fileBytes, options, primaryImageHandling);
         }
 
         /// <inheritdoc />
@@ -368,7 +412,8 @@ namespace JxlSharp
             ArgumentNullException.ThrowIfNull(options);
 
             string normalizedExt = NormalizeExtension(targetExtension);
-            JxlDecodeResult res  = Decode(jxlBytes, options);
+            if (jxlBytes.IsEmpty) throw new ArgumentException("Input JXL buffer must not be empty.", nameof(jxlBytes));
+            JxlDecodeResult res = DecodeCore(jxlBytes.ToArray(), options, PrimaryImageHandling.Skip);
 
             if ((normalizedExt == ".jpg" || normalizedExt == ".jpeg") &&
                 res.ReconstructedJpegBytes is not null &&
@@ -404,13 +449,13 @@ namespace JxlSharp
         }
 
         private static bool DecodePixelsWithColorSpaceFallback(
-            ReadOnlySpan<byte> jxlBytes,
+            ReadOnlyMemory<byte> jxlBytes,
             JXLDecompressParams dparams,
             SizeConstraints? constraints,
             PackedPixelFile ppf,
             out nuint consumed)
         {
-            if (CodecJxl.DecodeImageJXL(jxlBytes, dparams, out consumed, ppf, null, constraints))
+            if (CodecJxl.DecodeImageJXLFromMemory(jxlBytes, dparams, out consumed, ppf, null, constraints))
             {
                 return true;
             }
@@ -420,21 +465,21 @@ namespace JxlSharp
                 dparams.ColorSpace = string.Empty;
                 ppf.Frames.Clear();
 
-                return CodecJxl.DecodeImageJXL(jxlBytes, dparams, out consumed, ppf, null, constraints);
+                return CodecJxl.DecodeImageJXLFromMemory(jxlBytes, dparams, out consumed, ppf, null, constraints);
             }
 
             return false;
         }
 
         private static byte[]? TryReconstructJpeg(
-            ReadOnlySpan<byte> jxlBytes,
+            ReadOnlyMemory<byte> jxlBytes,
             JXLDecompressParams dparams,
             SizeConstraints? constraints)
         {
             PackedPixelFile tempPpf = new PackedPixelFile();
             List<byte> reconBuffer  = new List<byte>();
 
-            if (CodecJxl.DecodeImageJXL(jxlBytes, dparams, out _, tempPpf, reconBuffer, constraints) &&
+            if (CodecJxl.DecodeImageJXLFromMemory(jxlBytes, dparams, out _, tempPpf, reconBuffer, constraints) &&
                 reconBuffer.Count > 0)
             {
                 return reconBuffer.ToArray();
@@ -443,7 +488,8 @@ namespace JxlSharp
             return null;
         }
 
-        private static JxlDecodeResult DecodeExternalFormatBytes(byte[] fileBytes, JxlDecodeOptions options)
+        private static JxlDecodeResult DecodeExternalFormatBytes(byte[] fileBytes, JxlDecodeOptions options,
+            PrimaryImageHandling primaryImageHandling)
         {
             PackedPixelFile ppf = new PackedPixelFile();
             ColorHints hints    = new ColorHints();
@@ -469,7 +515,7 @@ namespace JxlSharp
 
             ApplyAlphaBlendIfRequested(ppf, options.AlphaBlendBackground);
 
-            return new JxlDecodeResult(ppf, null, (nuint)fileBytes.Length);
+            return new JxlDecodeResult(ppf, null, (nuint)fileBytes.Length, primaryImageHandling);
         }
 
         private static void ApplyAlphaBlendIfRequested(PackedPixelFile ppf, float[]? background)

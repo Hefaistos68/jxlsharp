@@ -34,6 +34,7 @@ namespace JxlSharp.Threads
         private JxlParallelRunFunction? _dataFunc;
         private object? _jpegxlOpaque;
         private int _numReserved;
+        private uint _activeWorkers;
         private bool _disposed;
 
         /// <summary>
@@ -140,6 +141,19 @@ namespace JxlSharp.Threads
             uint startRange,
             uint endRange)
         {
+            return Run(runnerOpaque, jpegxlOpaque, init, func, startRange, endRange, limitToTasks: false);
+        }
+
+        // Used by the facade; public Runner keeps its configured-thread initialization contract.
+        internal static int RunnerWithTaskLimit(object? runnerOpaque, object? jpegxlOpaque,
+            JxlParallelRunInit init, JxlParallelRunFunction func, uint startRange, uint endRange)
+        {
+            return Run(runnerOpaque, jpegxlOpaque, init, func, startRange, endRange, limitToTasks: true);
+        }
+
+        private static int Run(object? runnerOpaque, object? jpegxlOpaque,
+            JxlParallelRunInit init, JxlParallelRunFunction func, uint startRange, uint endRange, bool limitToTasks)
+        {
             if (runnerOpaque is not ThreadParallelRunner self)
             {
                 return DataParallel.ParallelRetRunnerError;
@@ -155,7 +169,8 @@ namespace JxlSharp.Threads
                 return DataParallel.ParallelRetSuccess;
             }
 
-            int ret = init(jpegxlOpaque, Math.Max((nuint)self._numWorkerThreads, 1u));
+            uint activeWorkers = limitToTasks ? Math.Min(self._numWorkerThreads, endRange - startRange) : self._numWorkerThreads;
+            int ret = init(jpegxlOpaque, Math.Max((nuint)activeWorkers, 1u));
 
             if (ret != DataParallel.ParallelRetSuccess)
             {
@@ -174,7 +189,7 @@ namespace JxlSharp.Threads
                 return DataParallel.ParallelRetSuccess;
             }
 
-            return self.ExecuteParallelRange(jpegxlOpaque, func, startRange, endRange);
+            return self.ExecuteParallelRange(jpegxlOpaque, func, startRange, endRange, activeWorkers);
         }
 
         /// <summary>
@@ -194,6 +209,8 @@ namespace JxlSharp.Threads
             _jpegxlOpaque = func;
             StartWorkers(WorkerOnce);
             WorkersReadyBarrier();
+            _dataFunc = null;
+            _jpegxlOpaque = null;
         }
 
         /// <summary>
@@ -231,10 +248,11 @@ namespace JxlSharp.Threads
 
         private static void RunRange(ThreadParallelRunner self, ulong command, int thread)
         {
+            if ((uint)thread >= self._activeWorkers) return;
             uint begin            = (uint)(command >> 32);
             uint end              = (uint)(command & 0xFFFFFFFFu);
             uint numTasks         = end - begin;
-            uint numWorkerThreads = self._numWorkerThreads;
+            uint numWorkerThreads = self._activeWorkers;
 
             for (; ;)
             {
@@ -288,7 +306,8 @@ namespace JxlSharp.Threads
             object? jpegxlOpaque,
             JxlParallelRunFunction func,
             uint startRange,
-            uint endRange)
+            uint endRange,
+            uint activeWorkers)
         {
             if (Interlocked.Increment(ref _depth) != 1)
             {
@@ -308,10 +327,13 @@ namespace JxlSharp.Threads
 
             _dataFunc     = func;
             _jpegxlOpaque = jpegxlOpaque;
+            _activeWorkers = activeWorkers;
             Volatile.Write(ref _numReserved, 0);
 
             StartWorkers(workerCommand);
             WorkersReadyBarrier();
+            _dataFunc = null;
+            _jpegxlOpaque = null;
 
             if (Interlocked.Decrement(ref _depth) != 0)
             {

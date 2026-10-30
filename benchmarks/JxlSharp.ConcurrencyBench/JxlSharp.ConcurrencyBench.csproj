@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/JxlSharp/JxlSharp.csproj" />
+    <ProjectReference Include="../../src/JxlSharp.Base/JxlSharp.Base.csproj" />
+    <ProjectReference Include="../../src/JxlSharp.Extras/JxlSharp.Extras.csproj" />
+  </ItemGroup>
+</Project>

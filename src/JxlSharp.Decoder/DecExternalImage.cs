@@ -6,6 +6,8 @@ using System;
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -204,7 +206,14 @@ namespace JxlSharp.Decoder
         {
             float maxCap = (bitsPerSample == 32) ? 4294967295.0f : ((1u << (int)bitsPerSample) - 1u);
 
-            for (nuint x = 0; x < num; x++)
+            nuint x = 0;
+            if (Avx2.IsSupported && bitsPerSample <= 16 && mul >= 0f && mul <= 65535f)
+            {
+                for (; x + 8 <= num; x += 8)
+                    PixelPacking.Quantize(Vector256.Create(inRow.Slice((int)x, 8)), mul, maxCap).CopyTo(outRow.Slice((int)x, 8));
+            }
+
+            for (; x < num; x++)
             {
                 float v = inRow[(int)x];
 
@@ -235,7 +244,13 @@ namespace JxlSharp.Decoder
         /// <param name="num">Number of samples to convert.</param>
         public static void FloatToF16(ReadOnlySpan<float> inRow, Span<ushort> outRow, nuint num)
         {
-            for (nuint x = 0; x < num; x++)
+            nuint x = 0;
+            if (Avx2.IsSupported)
+            {
+                for (; x + 8 <= num; x += 8)
+                    PixelPacking.FloatToHalf(Vector256.Create(inRow.Slice((int)x, 8))).CopyTo(outRow.Slice((int)x, 8));
+            }
+            for (; x < num; x++)
             {
                 Half half      = (Half)inRow[(int)x];
                 outRow[(int)x] = BitConverter.HalfToUInt16Bits(half);
@@ -740,52 +755,147 @@ namespace JxlSharp.Decoder
             bool littleEndian,
             Span<byte> rowOut)
         {
-            if (options.FloatOut)
+            if (Avx2.IsSupported && (numChannels == 3 || numChannels == 4) && xsize >= 8 &&
+                (options.FloatOut ? options.BitsPerSample == 32 : options.BitsPerSample <= 16))
             {
-                ConvertFloatRow(channels, numChannels, options.BitsPerSample, xsize, y, littleEndian, rowOut);
+                ConvertPackedRow(channels, (int)numChannels, (int)xsize, y, in options, littleEndian, rowOut);
+                return;
+            }
 
+            if (options.FloatOut || options.BitsPerSample <= 30)
+            {
+                ConvertSpecialRow(channels, (int)numChannels, (int)xsize, y, in options, littleEndian, rowOut);
                 return;
             }
 
             ConvertUintRow(channels, numChannels, options.BitsPerSample, xsize, y, littleEndian, rowOut);
         }
 
-        private static void ConvertFloatRow(
-            ImagePlane<float>?[] channels,
-            nuint numChannels,
-            nuint bitsPerSample,
-            nuint xsize,
-            nuint y,
-            bool littleEndian,
-            Span<byte> rowOut)
+        private static void ConvertPackedRow(ImagePlane<float>?[] channels, int count, int width, nuint y,
+            in ExternalConvertOptions options, bool littleEndian, Span<byte> output)
         {
-            if (bitsPerSample == 16)
+            ReadOnlySpan<float> r = channels[0]!.ConstRow(y);
+            ReadOnlySpan<float> g = channels[1]!.ConstRow(y);
+            ReadOnlySpan<float> b = channels[2]!.ConstRow(y);
+            ReadOnlySpan<float> a = count == 4 ? channels[3]!.ConstRow(y) : ReadOnlySpan<float>.Empty;
+            bool isFloat = options.FloatOut;
+            int bytes = isFloat ? 4 : options.BitsPerSample <= 8 ? 1 : 2;
+            float mul = isFloat ? 0f : (1u << (int)options.BitsPerSample) - 1u;
+            int x = 0;
+            for (; x + 8 <= width; x += 8)
             {
-                ushort[] tempF16     = new ushort[xsize];
-                Span<ushort> tempSpan = tempF16.AsSpan();
-
-                for (nuint c = 0; c < numChannels; c++)
+                Vector256<float> vr = Vector256.Create(r.Slice(x, 8));
+                Vector256<float> vg = Vector256.Create(g.Slice(x, 8));
+                Vector256<float> vb = Vector256.Create(b.Slice(x, 8));
+                Vector256<float> va = count == 4 ? Vector256.Create(a.Slice(x, 8)) : Vector256<float>.Zero;
+                if (!isFloat)
                 {
-                    FloatToF16(channels[c]!.ConstRow(y), tempSpan, xsize);
-                    InterleaveU16Channel(tempSpan, c, numChannels, xsize, littleEndian, rowOut);
+                    vr = PixelPacking.Quantize(vr, mul).AsSingle();
+                    vg = PixelPacking.Quantize(vg, mul).AsSingle();
+                    vb = PixelPacking.Quantize(vb, mul).AsSingle();
+                    if (count == 4) va = PixelPacking.Quantize(va, mul).AsSingle();
                 }
+                Vector256<float> p0, p1, p2, p3 = Vector256<float>.Zero;
+                if (count == 3) PixelPacking.Interleave3(vr, vg, vb, out p0, out p1, out p2);
+                else PixelPacking.Interleave4(vr, vg, vb, va, out p0, out p1, out p2, out p3);
+                Span<byte> dst = output.Slice(x * count * bytes);
+                PixelPacking.StoreSamples(p0, dst, bytes, isFloat, littleEndian);
+                PixelPacking.StoreSamples(p1, dst.Slice(8 * bytes), bytes, isFloat, littleEndian);
+                PixelPacking.StoreSamples(p2, dst.Slice(16 * bytes), bytes, isFloat, littleEndian);
+                if (count == 4) PixelPacking.StoreSamples(p3, dst.Slice(24 * bytes), bytes, isFloat, littleEndian);
+            }
+            for (; x < width; x++)
+            {
+                for (int c = 0; c < count; c++)
+                {
+                    float value = channels[c]!.ConstRow(y)[x];
+                    uint bits = isFloat ? BitConverter.SingleToUInt32Bits(value) : PixelPacking.Quantize(value, mul);
+                    int offset = (x * count + c) * bytes;
+                    if (bytes == 1) output[offset] = (byte)bits;
+                    else if (bytes == 2)
+                    {
+                        if (littleEndian) BinaryPrimitives.WriteUInt16LittleEndian(output.Slice(offset, 2), (ushort)bits);
+                        else BinaryPrimitives.WriteUInt16BigEndian(output.Slice(offset, 2), (ushort)bits);
+                    }
+                    else if (littleEndian) BinaryPrimitives.WriteUInt32LittleEndian(output.Slice(offset, 4), bits);
+                    else BinaryPrimitives.WriteUInt32BigEndian(output.Slice(offset, 4), bits);
+                }
+            }
+        }
 
+        private static void ConvertSpecialRow(ImagePlane<float>?[] channels, int count, int width, nuint y,
+            in ExternalConvertOptions options, bool littleEndian, Span<byte> output)
+        {
+            ReadOnlySpan<float> r = channels[0]!.ConstRow(y);
+            ReadOnlySpan<float> g = count >= 2 ? channels[1]!.ConstRow(y) : ReadOnlySpan<float>.Empty;
+            ReadOnlySpan<float> b = count >= 3 ? channels[2]!.ConstRow(y) : ReadOnlySpan<float>.Empty;
+            ReadOnlySpan<float> a = count == 4 ? channels[3]!.ConstRow(y) : ReadOnlySpan<float>.Empty;
+            bool isFloat = options.FloatOut;
+            bool isHalf = isFloat && options.BitsPerSample == 16;
+            int bytes = (int)((options.BitsPerSample + 7) / 8);
+            if (count == 1 && isFloat && !isHalf && littleEndian == BitConverter.IsLittleEndian)
+            {
+                MemoryMarshal.AsBytes(r.Slice(0, width)).CopyTo(output);
+                GC.KeepAlive(channels);
                 return;
             }
-
-            uint[] tempU32     = new uint[xsize];
-            Span<uint> u32Span = tempU32.AsSpan();
-
-            for (nuint c = 0; c < numChannels; c++)
+            float mul = isFloat ? 0f : (1u << (int)options.BitsPerSample) - 1u;
+            int x = 0;
+            for (; Avx2.IsSupported && x + 8 <= width; x += 8)
             {
-                ReadOnlySpan<float> inRow = channels[c]!.ConstRow(y);
-
-                for (nuint x = 0; x < xsize; x++)
+                Vector256<float> vr = Vector256.Create(r.Slice(x, 8));
+                Vector256<float> vg = count >= 2 ? Vector256.Create(g.Slice(x, 8)) : Vector256<float>.Zero;
+                Vector256<float> vb = count >= 3 ? Vector256.Create(b.Slice(x, 8)) : Vector256<float>.Zero;
+                Vector256<float> va = count == 4 ? Vector256.Create(a.Slice(x, 8)) : Vector256<float>.Zero;
+                if (!isFloat)
                 {
-                    u32Span[(int)x] = BitConverter.SingleToUInt32Bits(inRow[(int)x]);
+                    vr = PixelPacking.Quantize(vr, mul).AsSingle();
+                    if (count >= 2) vg = PixelPacking.Quantize(vg, mul).AsSingle();
+                    if (count >= 3) vb = PixelPacking.Quantize(vb, mul).AsSingle();
+                    if (count == 4) va = PixelPacking.Quantize(va, mul).AsSingle();
                 }
-
-                InterleaveU32Channel(u32Span, c, numChannels, xsize, littleEndian, rowOut);
+                Vector256<float> p0 = vr, p1 = Vector256<float>.Zero, p2 = Vector256<float>.Zero, p3 = Vector256<float>.Zero;
+                if (count == 2) PixelPacking.Interleave2(vr, vg, out p0, out p1);
+                else if (count == 3) PixelPacking.Interleave3(vr, vg, vb, out p0, out p1, out p2);
+                else if (count == 4) PixelPacking.Interleave4(vr, vg, vb, va, out p0, out p1, out p2, out p3);
+                Span<byte> dst = output.Slice(x * count * bytes);
+                if (isHalf)
+                {
+                    PixelPacking.StoreHalf(p0, dst, littleEndian);
+                    if (count >= 2) PixelPacking.StoreHalf(p1, dst.Slice(8 * bytes), littleEndian);
+                    if (count >= 3) PixelPacking.StoreHalf(p2, dst.Slice(16 * bytes), littleEndian);
+                    if (count == 4) PixelPacking.StoreHalf(p3, dst.Slice(24 * bytes), littleEndian);
+                }
+                else
+                {
+                    PixelPacking.StoreSamples(p0, dst, bytes, isFloat, littleEndian);
+                    if (count >= 2) PixelPacking.StoreSamples(p1, dst.Slice(8 * bytes), bytes, isFloat, littleEndian);
+                    if (count >= 3) PixelPacking.StoreSamples(p2, dst.Slice(16 * bytes), bytes, isFloat, littleEndian);
+                    if (count == 4) PixelPacking.StoreSamples(p3, dst.Slice(24 * bytes), bytes, isFloat, littleEndian);
+                }
+            }
+            for (; x < width; x++)
+            {
+                for (int c = 0; c < count; c++)
+                {
+                    float value = channels[c]!.ConstRow(y)[x];
+                    uint bits = isHalf ? BitConverter.HalfToUInt16Bits((Half)value) : isFloat ? BitConverter.SingleToUInt32Bits(value) : PixelPacking.Quantize(value, mul);
+                    int offset = (x * count + c) * bytes;
+                    if (bytes == 1) output[offset] = (byte)bits;
+                    else if (bytes == 2)
+                    {
+                        if (littleEndian) BinaryPrimitives.WriteUInt16LittleEndian(output.Slice(offset, 2), (ushort)bits);
+                        else BinaryPrimitives.WriteUInt16BigEndian(output.Slice(offset, 2), (ushort)bits);
+                    }
+                    else if (bytes == 3)
+                    {
+                        output[offset + (littleEndian ? 0 : 2)] = (byte)bits;
+                        output[offset + 1] = (byte)(bits >> 8);
+                        output[offset + (littleEndian ? 2 : 0)] = (byte)(bits >> 16);
+                    }
+                    else if (littleEndian) BinaryPrimitives.WriteUInt32LittleEndian(output.Slice(offset, 4), bits);
+                    else BinaryPrimitives.WriteUInt32BigEndian(output.Slice(offset, 4), bits);
+                }
             }
         }
 
@@ -882,29 +992,6 @@ namespace JxlSharp.Decoder
                     dst[0] = (byte)((val >> 16) & 0xFFu);
                     dst[1] = (byte)((val >> 8) & 0xFFu);
                     dst[2] = (byte)(val & 0xFFu);
-                }
-            }
-        }
-
-        private static void InterleaveU16Channel(
-            ReadOnlySpan<ushort> tempPtr,
-            nuint c,
-            nuint numChannels,
-            nuint xsize,
-            bool littleEndian,
-            Span<byte> rowOut)
-        {
-            for (nuint x = 0; x < xsize; x++)
-            {
-                Span<byte> dst = rowOut.Slice((int)(((x * numChannels) + c) * 2), 2);
-
-                if (littleEndian)
-                {
-                    ByteOrder.StoreLE16(tempPtr[(int)x], dst);
-                }
-                else
-                {
-                    ByteOrder.StoreBE16(tempPtr[(int)x], dst);
                 }
             }
         }
