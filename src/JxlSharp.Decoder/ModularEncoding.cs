@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using JxlSharp.Base;
 
@@ -338,6 +339,12 @@ namespace JxlSharp.Decoder
     /// </summary>
     public static class ModularEncoding
     {
+        [ThreadStatic]
+        private static List<FlatDecisionNode>? t_filterOutput;
+
+        [ThreadStatic]
+        private static Queue<int>? t_filterQueue;
+
         private struct TreeRange
         {
             public int Begin;
@@ -385,8 +392,11 @@ namespace JxlSharp.Decoder
             bool hasNonWp = false;
             gradientOnly = true;
 
-            List<FlatDecisionNode> output = new List<FlatDecisionNode>();
-            Queue<int> nodes              = new Queue<int>();
+            List<FlatDecisionNode> output = t_filterOutput ??= new List<FlatDecisionNode>(2048);
+            Queue<int> nodes              = t_filterQueue ??= new Queue<int>(1024);
+
+            output.Clear();
+            nodes.Clear();
             nodes.Enqueue(0);
 
             while (nodes.Count > 0)
@@ -1076,24 +1086,251 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeGradientLutChannel(ChannelDecodeState state, Channel channel, bool usesLz77)
         {
-            byte[] lut = state.TreeLut.ContextLookup;
-
-            for (nuint y = 0; y < channel.H; y++)
+            if (channel.W == 0 || channel.H == 0)
             {
-                Span<int> r            = channel.Row(y);
-                ReadOnlySpan<int> rtop = y > 0 ? channel.ConstRow(y - 1u) : ReadOnlySpan<int>.Empty;
+                return;
+            }
 
-                for (int x = 0; x < (int)channel.W; x++)
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+
+            reader.BeginFastRead(br, out ANSSymbolReader.EntropyRegState reg);
+
+            if (!usesLz77)
+            {
+                if (!reader.UsePrefixCode)
                 {
-                    long left    = x > 0 ? r[x - 1] : (y > 0 ? rtop[x] : 0);
-                    long top     = y > 0 ? rtop[x] : left;
-                    long topleft = x > 0 && y > 0 ? rtop[x - 1] : left;
-                    int guess    = ModularPredictors.ClampedGradient(top, left, topleft);
-                    long clamped = Math.Clamp(top + left - topleft, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
-                    int pos      = TreeLut.KPropRangeFast + (int)clamped;
-                    nuint ctxId  = lut[pos];
-                    uint v       = state.Reader.ReadHybridUintClustered(usesLz77, ctxId, state.Br);
-                    r[x]         = MakePixel(v, 1, guess);
+                    DecodeGradLutRowsAns(state, channel, ref reg);
+                }
+                else
+                {
+                    DecodeGradLutRowsHuff(state, channel, ref reg);
+                }
+            }
+            else if (!reader.UsePrefixCode)
+            {
+                DecodeGradLutRowsAnsLz77(state, channel, ref reg);
+            }
+            else
+            {
+                DecodeGradLutRowsHuffLz77(state, channel, ref reg);
+            }
+
+            reader.EndFastRead(br, in reg);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void DecodeGradLutRowsAns(
+            ChannelDecodeState state,
+            Channel channel,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+            ref byte lutRef        = ref MemoryMarshal.GetArrayDataReference(state.TreeLut.ContextLookup);
+            int w                  = (int)channel.W;
+            ref int r0Ref          = ref MemoryMarshal.GetReference(channel.Row(0));
+            int left0              = 0;
+
+            for (int x = 0; x < w; x++)
+            {
+                int clamped = Math.Clamp(left0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                uint v      = reader.ReadAnsNoLz77(ctxId, br, ref reg);
+                int cur     = unchecked(PackSigned.Unpack(v) + left0);
+
+                Unsafe.Add(ref r0Ref, x) = cur;
+                left0                    = cur;
+            }
+
+            for (nuint y = 1; y < channel.H; y++)
+            {
+                ref int rRef    = ref MemoryMarshal.GetReference(channel.Row(y));
+                ref int rtopRef = ref MemoryMarshal.GetReference(channel.ConstRow(y - 1u));
+                int top0        = rtopRef;
+                int clamped0    = Math.Clamp(top0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctx0      = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped0);
+                uint v0         = reader.ReadAnsNoLz77(ctx0, br, ref reg);
+                int left        = unchecked(PackSigned.Unpack(v0) + top0);
+                int topleft     = top0;
+
+                rRef = left;
+
+                for (int x = 1; x < w; x++)
+                {
+                    int top     = Unsafe.Add(ref rtopRef, x);
+                    int guess   = ModularPredictors.ClampedGradient(top, left, topleft);
+                    long grad   = (long)top + left - topleft;
+                    int clamped = (int)Math.Clamp(grad, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                    nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                    uint v      = reader.ReadAnsNoLz77(ctxId, br, ref reg);
+                    int cur     = unchecked(PackSigned.Unpack(v) + guess);
+
+                    Unsafe.Add(ref rRef, x) = cur;
+                    topleft                 = top;
+                    left                    = cur;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void DecodeGradLutRowsHuff(
+            ChannelDecodeState state,
+            Channel channel,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+            ref byte lutRef        = ref MemoryMarshal.GetArrayDataReference(state.TreeLut.ContextLookup);
+            int w                  = (int)channel.W;
+            ref int r0Ref          = ref MemoryMarshal.GetReference(channel.Row(0));
+            int left0              = 0;
+
+            for (int x = 0; x < w; x++)
+            {
+                int clamped = Math.Clamp(left0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                uint v      = reader.ReadHuffNoLz77(ctxId, br, ref reg);
+                int cur     = unchecked(PackSigned.Unpack(v) + left0);
+
+                Unsafe.Add(ref r0Ref, x) = cur;
+                left0                    = cur;
+            }
+
+            for (nuint y = 1; y < channel.H; y++)
+            {
+                ref int rRef    = ref MemoryMarshal.GetReference(channel.Row(y));
+                ref int rtopRef = ref MemoryMarshal.GetReference(channel.ConstRow(y - 1u));
+                int top0        = rtopRef;
+                int clamped0    = Math.Clamp(top0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctx0      = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped0);
+                uint v0         = reader.ReadHuffNoLz77(ctx0, br, ref reg);
+                int left        = unchecked(PackSigned.Unpack(v0) + top0);
+                int topleft     = top0;
+
+                rRef = left;
+
+                for (int x = 1; x < w; x++)
+                {
+                    int top     = Unsafe.Add(ref rtopRef, x);
+                    int guess   = ModularPredictors.ClampedGradient(top, left, topleft);
+                    long grad   = (long)top + left - topleft;
+                    int clamped = (int)Math.Clamp(grad, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                    nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                    uint v      = reader.ReadHuffNoLz77(ctxId, br, ref reg);
+                    int cur     = unchecked(PackSigned.Unpack(v) + guess);
+
+                    Unsafe.Add(ref rRef, x) = cur;
+                    topleft                 = top;
+                    left                    = cur;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void DecodeGradLutRowsAnsLz77(
+            ChannelDecodeState state,
+            Channel channel,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+            ref byte lutRef        = ref MemoryMarshal.GetArrayDataReference(state.TreeLut.ContextLookup);
+            int w                  = (int)channel.W;
+            ref int r0Ref          = ref MemoryMarshal.GetReference(channel.Row(0));
+            int left0              = 0;
+
+            for (int x = 0; x < w; x++)
+            {
+                int clamped = Math.Clamp(left0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                uint v      = reader.ReadAnsLz77(ctxId, br, ref reg);
+                int cur     = unchecked(PackSigned.Unpack(v) + left0);
+
+                Unsafe.Add(ref r0Ref, x) = cur;
+                left0                    = cur;
+            }
+
+            for (nuint y = 1; y < channel.H; y++)
+            {
+                ref int rRef    = ref MemoryMarshal.GetReference(channel.Row(y));
+                ref int rtopRef = ref MemoryMarshal.GetReference(channel.ConstRow(y - 1u));
+                int top0        = rtopRef;
+                int clamped0    = Math.Clamp(top0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctx0      = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped0);
+                uint v0         = reader.ReadAnsLz77(ctx0, br, ref reg);
+                int left        = unchecked(PackSigned.Unpack(v0) + top0);
+                int topleft     = top0;
+
+                rRef = left;
+
+                for (int x = 1; x < w; x++)
+                {
+                    int top     = Unsafe.Add(ref rtopRef, x);
+                    int guess   = ModularPredictors.ClampedGradient(top, left, topleft);
+                    long grad   = (long)top + left - topleft;
+                    int clamped = (int)Math.Clamp(grad, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                    nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                    uint v      = reader.ReadAnsLz77(ctxId, br, ref reg);
+                    int cur     = unchecked(PackSigned.Unpack(v) + guess);
+
+                    Unsafe.Add(ref rRef, x) = cur;
+                    topleft                 = top;
+                    left                    = cur;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void DecodeGradLutRowsHuffLz77(
+            ChannelDecodeState state,
+            Channel channel,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+            ref byte lutRef        = ref MemoryMarshal.GetArrayDataReference(state.TreeLut.ContextLookup);
+            int w                  = (int)channel.W;
+            ref int r0Ref          = ref MemoryMarshal.GetReference(channel.Row(0));
+            int left0              = 0;
+
+            for (int x = 0; x < w; x++)
+            {
+                int clamped = Math.Clamp(left0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                uint v      = reader.ReadHuffLz77(ctxId, br, ref reg);
+                int cur     = unchecked(PackSigned.Unpack(v) + left0);
+
+                Unsafe.Add(ref r0Ref, x) = cur;
+                left0                    = cur;
+            }
+
+            for (nuint y = 1; y < channel.H; y++)
+            {
+                ref int rRef    = ref MemoryMarshal.GetReference(channel.Row(y));
+                ref int rtopRef = ref MemoryMarshal.GetReference(channel.ConstRow(y - 1u));
+                int top0        = rtopRef;
+                int clamped0    = Math.Clamp(top0, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                nuint ctx0      = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped0);
+                uint v0         = reader.ReadHuffLz77(ctx0, br, ref reg);
+                int left        = unchecked(PackSigned.Unpack(v0) + top0);
+                int topleft     = top0;
+
+                rRef = left;
+
+                for (int x = 1; x < w; x++)
+                {
+                    int top     = Unsafe.Add(ref rtopRef, x);
+                    int guess   = ModularPredictors.ClampedGradient(top, left, topleft);
+                    long grad   = (long)top + left - topleft;
+                    int clamped = (int)Math.Clamp(grad, -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
+                    nuint ctxId = Unsafe.Add(ref lutRef, TreeLut.KPropRangeFast + clamped);
+                    uint v      = reader.ReadHuffLz77(ctxId, br, ref reg);
+                    int cur     = unchecked(PackSigned.Unpack(v) + guess);
+
+                    Unsafe.Add(ref rRef, x) = cur;
+                    topleft                 = top;
+                    left                    = cur;
                 }
             }
         }
@@ -1101,9 +1338,15 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DecodeWpLutChannel(ChannelDecodeState state, Channel channel)
         {
-            WeightedState wpState = new WeightedState(state.WpHeader, channel.W, channel.H);
-            Span<int> properties  = stackalloc int[1];
-            byte[] lut            = state.TreeLut.ContextLookup;
+            WeightedState wpState  = new WeightedState(state.WpHeader, channel.W, channel.H);
+            ANSSymbolReader reader = state.Reader;
+            BitReader br           = state.Br;
+            bool usePrefix         = reader.UsePrefixCode;
+
+            Span<int> properties   = stackalloc int[1];
+            byte[] lut             = state.TreeLut.ContextLookup;
+
+            reader.BeginFastRead(br, out ANSSymbolReader.EntropyRegState reg);
 
             for (nuint y = 0; y < channel.H; y++)
             {
@@ -1125,11 +1368,16 @@ namespace JxlSharp.Decoder
                     int pos     = TreeLut.KPropRangeFast +
                                   Math.Clamp(properties[0], -TreeLut.KPropRangeFast, TreeLut.KPropRangeFast - 1);
                     nuint ctxId = lut[pos];
-                    uint v      = state.Reader.ReadHybridUintClustered(usesLz77: false, ctxId, state.Br);
+                    uint v      = usePrefix
+                        ? reader.ReadHuffNoLz77(ctxId, br, ref reg)
+                        : reader.ReadAnsNoLz77(ctxId, br, ref reg);
                     r[x]        = MakePixel(v, 1, guess);
                     wpState.UpdateErrors(r[x], (nuint)x, y, channel.W);
                 }
             }
+
+            reader.EndFastRead(br, in reg);
+
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]

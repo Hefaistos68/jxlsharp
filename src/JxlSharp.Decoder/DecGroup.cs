@@ -7,6 +7,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -139,6 +141,9 @@ namespace JxlSharp.Decoder
         private ImagePlane<byte>? _quantDc;
         private ReadOnlyMemory<int> _qfRow;
         private ReadOnlyMemory<byte> _quantDcRow;
+        private readonly Memory<int>[] _rowNzerosFlat           = new Memory<int>[FrameDimensions.KMaxNumPasses * 3];
+        private readonly ReadOnlyMemory<int>[] _rowNzerosTopFlat = new ReadOnlyMemory<int>[FrameDimensions.KMaxNumPasses * 3];
+        private bool _is444;
         private Rect _rect;
 
         /// <summary>
@@ -154,6 +159,7 @@ namespace JxlSharp.Decoder
                 VShift[i] = args.FrameHeader.ChromaSubsampling.VShift(i);
             }
 
+            _is444          = (HShift[0] | HShift[1] | HShift[2] | VShift[0] | VShift[1] | VShift[2]) == 0;
             _coeffOrderSize = args.DecState.Shared.CoeffOrderSize;
             _coeffOrders    = args.DecState.Shared.CoeffOrders;
             _firstPass      = args.FirstPass;
@@ -188,6 +194,7 @@ namespace JxlSharp.Decoder
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public override void StartRow(nuint by)
         {
             _qfRow      = _qf!.RowMemory((nuint)_rect.Y0 + by).Slice(_rect.X0);
@@ -200,7 +207,11 @@ namespace JxlSharp.Decoder
                 for (nuint i = 0; i < _numPasses; i++)
                 {
                     ImagePlane<int> nzPlane = _groupDecCache!.NumNzeroes[i].Plane((nuint)c);
-                    RowNzeros[i, c]         = nzPlane.RowMemory(sby);
+                    Memory<int> curRow             = nzPlane.RowMemory(sby);
+                    int flatIdx                    = ((int)i * 3) + c;
+                    _rowNzerosFlat[flatIdx]        = curRow;
+                    _rowNzerosTopFlat[flatIdx]     = sby == 0 ? ReadOnlyMemory<int>.Empty : nzPlane.RowMemory(sby - 1);
+                    RowNzeros[i, c]                = curRow;
                     RowNzerosTop[i, c]      = sby == 0
                         ? ReadOnlyMemory<int>.Empty
                         : nzPlane.RowMemory(sby - 1);
@@ -209,6 +220,7 @@ namespace JxlSharp.Decoder
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public override Status LoadBlock(
             nuint bx,
             nuint by,
@@ -221,6 +233,25 @@ namespace JxlSharp.Decoder
             _ = size;
 
             ReadOnlySpan<uint> baseOrders = _coeffOrders.AsSpan((int)(_firstPass * _coeffOrderSize));
+
+            if (_is444)
+            {
+                Status s1 = DecodeChannelPasses(1, bx, by, bx, acs, log2CoveredBlocks, baseOrders, block[1], acType);
+
+                if (!s1.IsOk)
+                {
+                    return s1;
+                }
+
+                Status s0 = DecodeChannelPasses(0, bx, by, bx, acs, log2CoveredBlocks, baseOrders, block[0], acType);
+
+                if (!s0.IsOk)
+                {
+                    return s0;
+                }
+
+                return DecodeChannelPasses(2, bx, by, bx, acs, log2CoveredBlocks, baseOrders, block[2], acType);
+            }
 
             foreach (int c in ChannelOrder)
             {
@@ -286,6 +317,7 @@ namespace JxlSharp.Decoder
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private Status DecodeChannelPasses(
             int c,
             nuint sbx,
@@ -304,8 +336,8 @@ namespace JxlSharp.Decoder
                 {
                     CtxOffset         = CtxOffset[pass],
                     Log2CoveredBlocks = log2CoveredBlocks,
-                    RowNzeros         = RowNzeros[pass, c].Span,
-                    RowNzerosTop      = RowNzerosTop[pass, c].Span,
+                    RowNzeros         = _rowNzerosFlat[((int)pass * 3) + c].Span,
+                    RowNzerosTop      = _rowNzerosTopFlat[((int)pass * 3) + c].Span,
                     NzerosStride      = _nzerosStride,
                     C                 = (nuint)c,
                     Bx                = sbx,
@@ -386,11 +418,13 @@ namespace JxlSharp.Decoder
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public override void StartRow(nuint by)
         {
         }
 
         /// <inheritdoc />
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public override Status LoadBlock(
             nuint bx,
             nuint by,
@@ -888,6 +922,11 @@ namespace JxlSharp.Decoder
             nuint histoOffset,
             nuint nzeros)
         {
+            if (!args.UsesLz77)
+            {
+                return ReadAcCoefficientsNoLz77(in args, coveredBlocks, size, order, histoOffset, nzeros);
+            }
+
             nuint prev        = nzeros > (size / 16u) ? 0u : 1u;
             int shift         = (int)args.Shift;
             bool is16         = args.AcType == ACType.k16;
@@ -939,6 +978,225 @@ namespace JxlSharp.Decoder
             }
 
             return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static Status ReadAcCoefficientsNoLz77(
+            in AcVarBlockArgs args,
+            nuint coveredBlocks,
+            nuint size,
+            ReadOnlySpan<uint> order,
+            nuint histoOffset,
+            nuint nzeros)
+        {
+            ANSSymbolReader decoder = args.Decoder;
+            BitReader br            = args.Br;
+
+            decoder.BeginFastRead(br, out ANSSymbolReader.EntropyRegState reg);
+
+            if (args.AcType == ACType.k16)
+            {
+                if (!decoder.UsePrefixCode)
+                {
+                    ReadAcLoopAns16(in args, (coveredBlocks, size, histoOffset), order, ref nzeros, ref reg);
+                }
+                else
+                {
+                    ReadAcLoopHuff16(in args, (coveredBlocks, size, histoOffset), order, ref nzeros, ref reg);
+                }
+            }
+            else if (!decoder.UsePrefixCode)
+            {
+                ReadAcLoopAns32(in args, (coveredBlocks, size, histoOffset), order, ref nzeros, ref reg);
+            }
+            else
+            {
+                ReadAcLoopHuff32(in args, (coveredBlocks, size, histoOffset), order, ref nzeros, ref reg);
+            }
+
+            decoder.EndFastRead(br, in reg);
+
+            if (nzeros != 0)
+            {
+                return Status.Failure(
+                    $"Invalid AC: nzeros at end of block is {nzeros}, should be 0. Block ({args.Bx}, {args.By}), channel {args.C}");
+            }
+
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ReadAcLoopAns16(
+            in AcVarBlockArgs args,
+            (nuint CoveredBlocks, nuint Size, nuint HistoOffset) bounds,
+            ReadOnlySpan<uint> order,
+            ref nuint nzeros,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader decoder = args.Decoder;
+            BitReader br            = args.Br;
+            nuint coveredBlocks     = bounds.CoveredBlocks;
+            nuint size              = bounds.Size;
+            nuint histoOffset       = bounds.HistoOffset;
+            nuint log2Cov           = args.Log2CoveredBlocks;
+            int shift               = (int)args.Shift;
+            nuint prev              = nzeros > (size / 16u) ? 0u : 1u;
+            ref byte ctxMapRef      = ref MemoryMarshal.GetArrayDataReference(args.ContextMap);
+            ref uint orderRef       = ref MemoryMarshal.GetReference(order);
+            ref short ptr16Ref      = ref MemoryMarshal.GetReference(args.Block.Span16);
+
+            for (nuint k = coveredBlocks; k < size && nzeros != 0; ++k)
+            {
+                nuint ctx      = histoOffset + AcContext.ZeroDensityContext(nzeros, k, coveredBlocks, log2Cov, prev);
+                nuint histoIdx = Unsafe.Add(ref ctxMapRef, ctx);
+                uint uCoeff    = decoder.ReadAnsNoLz77(histoIdx, br, ref reg);
+
+                if (uCoeff == 0u)
+                {
+                    prev = 0u;
+                    continue;
+                }
+
+                nint magnitude = (nint)(uCoeff >> 1);
+                nint negSign   = (nint)((~uCoeff) & 1u);
+                int coeff      = (int)((magnitude ^ (negSign - 1)) << shift);
+                int pos        = (int)Unsafe.Add(ref orderRef, k);
+                ref short dst  = ref Unsafe.Add(ref ptr16Ref, pos);
+
+                dst  = (short)(dst + coeff);
+                prev = 1u;
+                nzeros--;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ReadAcLoopHuff16(
+            in AcVarBlockArgs args,
+            (nuint CoveredBlocks, nuint Size, nuint HistoOffset) bounds,
+            ReadOnlySpan<uint> order,
+            ref nuint nzeros,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader decoder = args.Decoder;
+            BitReader br            = args.Br;
+            nuint coveredBlocks     = bounds.CoveredBlocks;
+            nuint size              = bounds.Size;
+            nuint histoOffset       = bounds.HistoOffset;
+            nuint log2Cov           = args.Log2CoveredBlocks;
+            int shift               = (int)args.Shift;
+            nuint prev              = nzeros > (size / 16u) ? 0u : 1u;
+            ref byte ctxMapRef      = ref MemoryMarshal.GetArrayDataReference(args.ContextMap);
+            ref uint orderRef       = ref MemoryMarshal.GetReference(order);
+            ref short ptr16Ref      = ref MemoryMarshal.GetReference(args.Block.Span16);
+
+            for (nuint k = coveredBlocks; k < size && nzeros != 0; ++k)
+            {
+                nuint ctx      = histoOffset + AcContext.ZeroDensityContext(nzeros, k, coveredBlocks, log2Cov, prev);
+                nuint histoIdx = Unsafe.Add(ref ctxMapRef, ctx);
+                uint uCoeff    = decoder.ReadHuffNoLz77(histoIdx, br, ref reg);
+
+                if (uCoeff == 0u)
+                {
+                    prev = 0u;
+                    continue;
+                }
+
+                nint magnitude = (nint)(uCoeff >> 1);
+                nint negSign   = (nint)((~uCoeff) & 1u);
+                int coeff      = (int)((magnitude ^ (negSign - 1)) << shift);
+                int pos        = (int)Unsafe.Add(ref orderRef, k);
+                ref short dst  = ref Unsafe.Add(ref ptr16Ref, pos);
+
+                dst  = (short)(dst + coeff);
+                prev = 1u;
+                nzeros--;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ReadAcLoopAns32(
+            in AcVarBlockArgs args,
+            (nuint CoveredBlocks, nuint Size, nuint HistoOffset) bounds,
+            ReadOnlySpan<uint> order,
+            ref nuint nzeros,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader decoder = args.Decoder;
+            BitReader br            = args.Br;
+            nuint coveredBlocks     = bounds.CoveredBlocks;
+            nuint size              = bounds.Size;
+            nuint histoOffset       = bounds.HistoOffset;
+            nuint log2Cov           = args.Log2CoveredBlocks;
+            int shift               = (int)args.Shift;
+            nuint prev              = nzeros > (size / 16u) ? 0u : 1u;
+            ref byte ctxMapRef      = ref MemoryMarshal.GetArrayDataReference(args.ContextMap);
+            ref uint orderRef       = ref MemoryMarshal.GetReference(order);
+            ref int ptr32Ref        = ref MemoryMarshal.GetReference(args.Block.Span32);
+
+            for (nuint k = coveredBlocks; k < size && nzeros != 0; ++k)
+            {
+                nuint ctx      = histoOffset + AcContext.ZeroDensityContext(nzeros, k, coveredBlocks, log2Cov, prev);
+                nuint histoIdx = Unsafe.Add(ref ctxMapRef, ctx);
+                uint uCoeff    = decoder.ReadAnsNoLz77(histoIdx, br, ref reg);
+
+                if (uCoeff == 0u)
+                {
+                    prev = 0u;
+                    continue;
+                }
+
+                nint magnitude = (nint)(uCoeff >> 1);
+                nint negSign   = (nint)((~uCoeff) & 1u);
+                int coeff      = (int)((magnitude ^ (negSign - 1)) << shift);
+                int pos        = (int)Unsafe.Add(ref orderRef, k);
+
+                Unsafe.Add(ref ptr32Ref, pos) += coeff;
+                prev                           = 1u;
+                nzeros--;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ReadAcLoopHuff32(
+            in AcVarBlockArgs args,
+            (nuint CoveredBlocks, nuint Size, nuint HistoOffset) bounds,
+            ReadOnlySpan<uint> order,
+            ref nuint nzeros,
+            ref ANSSymbolReader.EntropyRegState reg)
+        {
+            ANSSymbolReader decoder = args.Decoder;
+            BitReader br            = args.Br;
+            nuint coveredBlocks     = bounds.CoveredBlocks;
+            nuint size              = bounds.Size;
+            nuint histoOffset       = bounds.HistoOffset;
+            nuint log2Cov           = args.Log2CoveredBlocks;
+            int shift               = (int)args.Shift;
+            nuint prev              = nzeros > (size / 16u) ? 0u : 1u;
+            ref byte ctxMapRef      = ref MemoryMarshal.GetArrayDataReference(args.ContextMap);
+            ref uint orderRef       = ref MemoryMarshal.GetReference(order);
+            ref int ptr32Ref        = ref MemoryMarshal.GetReference(args.Block.Span32);
+
+            for (nuint k = coveredBlocks; k < size && nzeros != 0; ++k)
+            {
+                nuint ctx      = histoOffset + AcContext.ZeroDensityContext(nzeros, k, coveredBlocks, log2Cov, prev);
+                nuint histoIdx = Unsafe.Add(ref ctxMapRef, ctx);
+                uint uCoeff    = decoder.ReadHuffNoLz77(histoIdx, br, ref reg);
+
+                if (uCoeff == 0u)
+                {
+                    prev = 0u;
+                    continue;
+                }
+
+                nint magnitude = (nint)(uCoeff >> 1);
+                nint negSign   = (nint)((~uCoeff) & 1u);
+                int coeff      = (int)((magnitude ^ (negSign - 1)) << shift);
+                int pos        = (int)Unsafe.Add(ref orderRef, k);
+
+                Unsafe.Add(ref ptr32Ref, pos) += coeff;
+                prev                           = 1u;
+                nzeros--;
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1662,6 +1920,101 @@ namespace JxlSharp.Decoder
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void FillLowestFrequenciesFromDc(in DequantBlockArgs args, Span<float> block, int size)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                DecTransforms.LowestFrequenciesFromDC(
+                    args.Kind,
+                    args.DcRows[c].Span.Slice((int)args.Sbx[c]),
+                    args.DcStride,
+                    block.Slice(c * size, size),
+                    args.Scratch);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void DequantCoeffs16Simd(
+            in DequantBlockArgs args,
+            ReadOnlySpan<float> dequantMatrices,
+            int totalCoeffs,
+            int size,
+            (float X, float Y, float B) scaledDequant)
+        {
+            ref short q0Ref   = ref MemoryMarshal.GetReference(args.Qblock[0].Span16);
+            ref short q1Ref   = ref MemoryMarshal.GetReference(args.Qblock[1].Span16);
+            ref short q2Ref   = ref MemoryMarshal.GetReference(args.Qblock[2].Span16);
+            ref float blkXRef = ref MemoryMarshal.GetReference(args.Block);
+            ref float blkYRef = ref Unsafe.Add(ref blkXRef, size);
+            ref float blkBRef = ref Unsafe.Add(ref blkXRef, 2 * size);
+
+            for (int k = 0; k < totalCoeffs; k += 8)
+            {
+                Vector128<short> v0 = Vector128.LoadUnsafe(ref q0Ref, (nuint)k);
+                Vector128<short> v1 = Vector128.LoadUnsafe(ref q1Ref, (nuint)k);
+                Vector128<short> v2 = Vector128.LoadUnsafe(ref q2Ref, (nuint)k);
+
+                if ((v0 | v1 | v2) == Vector128<short>.Zero)
+                {
+                    Vector128<float>.Zero.StoreUnsafe(ref blkXRef, (nuint)k);
+                    Vector128<float>.Zero.StoreUnsafe(ref blkXRef, (nuint)(k + 4));
+                    Vector128<float>.Zero.StoreUnsafe(ref blkYRef, (nuint)k);
+                    Vector128<float>.Zero.StoreUnsafe(ref blkYRef, (nuint)(k + 4));
+                    Vector128<float>.Zero.StoreUnsafe(ref blkBRef, (nuint)k);
+                    Vector128<float>.Zero.StoreUnsafe(ref blkBRef, (nuint)(k + 4));
+                    continue;
+                }
+
+                DequantOctet16(in args, dequantMatrices, (k, size), scaledDequant);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void DequantOctet16(
+            in DequantBlockArgs args,
+            ReadOnlySpan<float> dequantMatrices,
+            (int K, int Size) offsets,
+            (float X, float Y, float B) scaledDequant)
+        {
+            ref short q0Ref       = ref MemoryMarshal.GetReference(args.Qblock[0].Span16);
+            ref short q1Ref       = ref MemoryMarshal.GetReference(args.Qblock[1].Span16);
+            ref short q2Ref       = ref MemoryMarshal.GetReference(args.Qblock[2].Span16);
+            ref float deqRef      = ref MemoryMarshal.GetReference(dequantMatrices);
+            ref float blkRef      = ref MemoryMarshal.GetReference(args.Block);
+            ReadOnlySpan<float> b = args.Biases;
+            float xCcMul          = args.XCcMul;
+            float bCcMul          = args.BCcMul;
+            int size              = offsets.Size;
+            int end               = offsets.K + 8;
+
+            for (int i = offsets.K; i < end; i++)
+            {
+                int qx = Unsafe.Add(ref q0Ref, i);
+                int qy = Unsafe.Add(ref q1Ref, i);
+                int qb = Unsafe.Add(ref q2Ref, i);
+
+                if ((qx | qy | qb) == 0)
+                {
+                    Unsafe.Add(ref blkRef, i)              = 0.0f;
+                    Unsafe.Add(ref blkRef, size + i)       = 0.0f;
+                    Unsafe.Add(ref blkRef, (2 * size) + i) = 0.0f;
+                    continue;
+                }
+
+                float xMul       = Unsafe.Add(ref deqRef, i) * scaledDequant.X;
+                float yMul       = Unsafe.Add(ref deqRef, size + i) * scaledDequant.Y;
+                float bMul       = Unsafe.Add(ref deqRef, (2 * size) + i) * scaledDequant.B;
+                float dequantXCc = AdjustQuantBias(0, qx, b) * xMul;
+                float dequantY   = AdjustQuantBias(1, qy, b) * yMul;
+                float dequantBCc = AdjustQuantBias(2, qb, b) * bMul;
+
+                Unsafe.Add(ref blkRef, i)              = MathF.FusedMultiplyAdd(xCcMul, dequantY, dequantXCc);
+                Unsafe.Add(ref blkRef, size + i)       = dequantY;
+                Unsafe.Add(ref blkRef, (2 * size) + i) = MathF.FusedMultiplyAdd(bCcMul, dequantY, dequantBCc);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void DequantBlock(in DequantBlockArgs args)
         {
             float scaledDequantS = args.InvGlobalScale / args.Quant;
@@ -1677,6 +2030,14 @@ namespace JxlSharp.Decoder
             float xCcMul                        = args.XCcMul;
             float bCcMul                        = args.BCcMul;
             bool is16                           = args.AcType == ACType.k16;
+
+            if (is16 && Vector128.IsHardwareAccelerated)
+            {
+                DequantCoeffs16Simd(in args, dequantMatrices, totalCoeffs, size, (scaledDequantX, scaledDequantY, scaledDequantB));
+                FillLowestFrequenciesFromDc(in args, block, size);
+
+                return;
+            }
             ReadOnlySpan<short> q0_16           = is16 ? args.Qblock[0].Span16 : ReadOnlySpan<short>.Empty;
             ReadOnlySpan<short> q1_16           = is16 ? args.Qblock[1].Span16 : ReadOnlySpan<short>.Empty;
             ReadOnlySpan<short> q2_16           = is16 ? args.Qblock[2].Span16 : ReadOnlySpan<short>.Empty;

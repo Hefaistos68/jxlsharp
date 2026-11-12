@@ -12,6 +12,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Threading;
 using JxlSharp.Base;
 using JxlSharp.Cms;
@@ -2659,6 +2661,7 @@ namespace JxlSharp.Decoder
                 _lineBuffers = Array.Empty<PipelineRow[]>();
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private void ProcessChunk(
                 PipelineRow[][] inputRows,
                 nuint threadId,
@@ -2747,6 +2750,7 @@ namespace JxlSharp.Decoder
                 }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private void OutputBuffers(
                 Output output,
                 nuint threadId,
@@ -2765,7 +2769,18 @@ namespace JxlSharp.Decoder
                 if (output.DataType == JxlDataType.UInt8)
                 {
                     Span<byte> temp = MemoryMarshal.AsBytes(tempFloat);
-                    StoreUnsigned8Row(output, input, len, temp, xstart, ypos);
+                    if (output.RunOpaque == null && !_transpose)
+                    {
+                        int directOff      = (int)((ypos * output.Stride) + (xstart * output.NumChannels));
+                        int directLen      = (int)(len * output.NumChannels);
+                        Span<byte> directB = output.Buffer.Span.Slice(directOff, directLen);
+
+                        StoreUnsigned8RowSimd(output, input, len, directB, xstart, ypos);
+
+                        return;
+                    }
+
+                    StoreUnsigned8RowSimd(output, input, len, temp, xstart, ypos);
                     WriteToOutput(output, threadId, ypos, xstart, len, temp, 1u);
                 }
                 else if (output.DataType == JxlDataType.UInt16 || output.DataType == JxlDataType.Float16)
@@ -2796,7 +2811,22 @@ namespace JxlSharp.Decoder
                 else if (output.DataType == JxlDataType.Float)
                 {
                     Span<float> temp = tempFloat;
-                    StoreFloatRow(output, input, len, temp);
+                    if (output.RunOpaque == null && !_transpose && !output.SwapEndianness)
+                    {
+                        nuint byteOff = (ypos * output.Stride) + (xstart * output.NumChannels * 4u);
+
+                        if ((byteOff & 3u) == 0u)
+                        {
+                            int byteLen         = (int)(len * output.NumChannels * 4u);
+                            Span<float> directF = MemoryMarshal.Cast<byte, float>(output.Buffer.Span.Slice((int)byteOff, byteLen));
+
+                            StoreFloatRowSimd(output, input, len, directF);
+
+                            return;
+                        }
+                    }
+
+                    StoreFloatRowSimd(output, input, len, temp);
 
                     if (output.SwapEndianness)
                     {
@@ -2853,6 +2883,154 @@ namespace JxlSharp.Decoder
                 xstart = _width - xstart - len;
             }
 
+            private static ReadOnlySpan<byte> RgbByteMaskR0 => new byte[]
+            {
+                0, 0xFF, 0xFF, 1, 0xFF, 0xFF, 2, 0xFF, 0xFF, 3, 0xFF, 0xFF, 4, 0xFF, 0xFF, 5,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskG0 => new byte[]
+            {
+                0xFF, 0, 0xFF, 0xFF, 1, 0xFF, 0xFF, 2, 0xFF, 0xFF, 3, 0xFF, 0xFF, 4, 0xFF, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskB0 => new byte[]
+            {
+                0xFF, 0xFF, 0, 0xFF, 0xFF, 1, 0xFF, 0xFF, 2, 0xFF, 0xFF, 3, 0xFF, 0xFF, 4, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskR1 => new byte[]
+            {
+                0xFF, 0xFF, 6, 0xFF, 0xFF, 7, 0xFF, 0xFF, 8, 0xFF, 0xFF, 9, 0xFF, 0xFF, 10, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskG1 => new byte[]
+            {
+                5, 0xFF, 0xFF, 6, 0xFF, 0xFF, 7, 0xFF, 0xFF, 8, 0xFF, 0xFF, 9, 0xFF, 0xFF, 10,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskB1 => new byte[]
+            {
+                0xFF, 5, 0xFF, 0xFF, 6, 0xFF, 0xFF, 7, 0xFF, 0xFF, 8, 0xFF, 0xFF, 9, 0xFF, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskR2 => new byte[]
+            {
+                0xFF, 11, 0xFF, 0xFF, 12, 0xFF, 0xFF, 13, 0xFF, 0xFF, 14, 0xFF, 0xFF, 15, 0xFF, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskG2 => new byte[]
+            {
+                0xFF, 0xFF, 11, 0xFF, 0xFF, 12, 0xFF, 0xFF, 13, 0xFF, 0xFF, 14, 0xFF, 0xFF, 15, 0xFF,
+            };
+
+            private static ReadOnlySpan<byte> RgbByteMaskB2 => new byte[]
+            {
+                10, 0xFF, 0xFF, 11, 0xFF, 0xFF, 12, 0xFF, 0xFF, 13, 0xFF, 0xFF, 14, 0xFF, 0xFF, 15,
+            };
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+            private static void StoreUnsigned8RowSimd(
+                Output output,
+                PipelineRow[] input,
+                nuint len,
+                Span<byte> dst,
+                nuint xstart,
+                nuint ypos)
+            {
+                if (output.NumChannels == 3 && Vector256.IsHardwareAccelerated && Vector128.IsHardwareAccelerated && len >= 16)
+                {
+                    StoreUnsigned8RowRgbSimd(output, input, len, dst, xstart, ypos);
+
+                    return;
+                }
+
+                StoreUnsigned8Row(output, input, len, dst, xstart, ypos);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+            private static void StoreUnsigned8RowRgbSimd(
+                Output output,
+                PipelineRow[] input,
+                nuint len,
+                Span<byte> dst,
+                nuint xstart,
+                nuint ypos)
+            {
+                float mul               = (1u << (int)output.BitsPerSample) - 1u;
+                Vector256<float> mulVec = Vector256.Create(mul);
+                int n                   = (int)len;
+                ref float r0Ref         = ref MemoryMarshal.GetReference(input[0].AsSpan(0, n));
+                ref float r1Ref         = ref MemoryMarshal.GetReference(input[1].AsSpan(0, n));
+                ref float r2Ref         = ref MemoryMarshal.GetReference(input[2].AsSpan(0, n));
+                ref byte dstRef         = ref MemoryMarshal.GetReference(dst);
+                ref float ditherRef     = ref MemoryMarshal.GetArrayDataReference(KDither);
+                int yRow0               = (int)((ypos & 31u) * 48u);
+                int yRow1               = (int)(((ypos + 13u) & 31u) * 48u);
+                int yRow2               = (int)(((ypos + 26u) & 31u) * 48u);
+                Vector128<byte> mR0     = Vector128.Create(RgbByteMaskR0);
+                Vector128<byte> mG0     = Vector128.Create(RgbByteMaskG0);
+                Vector128<byte> mB0     = Vector128.Create(RgbByteMaskB0);
+                Vector128<byte> mR1     = Vector128.Create(RgbByteMaskR1);
+                Vector128<byte> mG1     = Vector128.Create(RgbByteMaskG1);
+                Vector128<byte> mB1     = Vector128.Create(RgbByteMaskB1);
+                Vector128<byte> mR2     = Vector128.Create(RgbByteMaskR2);
+                Vector128<byte> mG2     = Vector128.Create(RgbByteMaskG2);
+                Vector128<byte> mB2     = Vector128.Create(RgbByteMaskB2);
+                int i                   = 0;
+
+                for (; i <= n - 16; i += 16)
+                {
+                    nuint x            = xstart + (nuint)i;
+                    Vector128<byte> rB = ConvertChannel16ToBytes(ref Unsafe.Add(ref r0Ref, i), ref ditherRef, yRow0, x, mulVec);
+                    Vector128<byte> gB = ConvertChannel16ToBytes(ref Unsafe.Add(ref r1Ref, i), ref ditherRef, yRow1, x + 23u, mulVec);
+                    Vector128<byte> bB = ConvertChannel16ToBytes(ref Unsafe.Add(ref r2Ref, i), ref ditherRef, yRow2, x + 46u, mulVec);
+                    nuint byteIdx      = (nuint)(i * 3);
+
+                    (Vector128.Shuffle(rB, mR0) | Vector128.Shuffle(gB, mG0) | Vector128.Shuffle(bB, mB0))
+                        .StoreUnsafe(ref dstRef, byteIdx);
+                    (Vector128.Shuffle(rB, mR1) | Vector128.Shuffle(gB, mG1) | Vector128.Shuffle(bB, mB1))
+                        .StoreUnsafe(ref dstRef, byteIdx + 16u);
+                    (Vector128.Shuffle(rB, mR2) | Vector128.Shuffle(gB, mG2) | Vector128.Shuffle(bB, mB2))
+                        .StoreUnsafe(ref dstRef, byteIdx + 32u);
+                }
+
+                for (; i < n; ++i)
+                {
+                    int baseIdx      = i * 3;
+                    nuint x          = xstart + (nuint)i;
+                    dst[baseIdx]     = MakeUnsigned8(Unsafe.Add(ref r0Ref, i), x, ypos, mul, 0);
+                    dst[baseIdx + 1] = MakeUnsigned8(Unsafe.Add(ref r1Ref, i), x, ypos, mul, 1);
+                    dst[baseIdx + 2] = MakeUnsigned8(Unsafe.Add(ref r2Ref, i), x, ypos, mul, 2);
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private static Vector128<byte> ConvertChannel16ToBytes(
+                ref float srcRef,
+                ref float ditherRef,
+                int yRowOffset,
+                nuint xPlusOffset,
+                Vector256<float> mulVec)
+            {
+                int xOff0           = (int)(xPlusOffset & 31u);
+                int xOff1           = (int)((xPlusOffset + 8u) & 31u);
+                Vector256<float> v0 = Vector256.LoadUnsafe(ref srcRef);
+                Vector256<float> v1 = Vector256.LoadUnsafe(ref srcRef, 8);
+                Vector256<float> d0 = Vector256.LoadUnsafe(ref ditherRef, (nuint)(yRowOffset + xOff0));
+                Vector256<float> d1 = Vector256.LoadUnsafe(ref ditherRef, (nuint)(yRowOffset + xOff1));
+
+                v0 = Vector256.Max(Vector256<float>.Zero, Vector256.Min((v0 * mulVec) + d0, mulVec));
+                v1 = Vector256.Max(Vector256<float>.Zero, Vector256.Min((v1 * mulVec) + d1, mulVec));
+
+                Vector256<int> i0    = Vector256.ConvertToInt32(Vector256.Round(v0));
+                Vector256<int> i1    = Vector256.ConvertToInt32(Vector256.Round(v1));
+                Vector128<ushort> u0 = Vector128.Narrow(i0.GetLower().AsUInt32(), i0.GetUpper().AsUInt32());
+                Vector128<ushort> u1 = Vector128.Narrow(i1.GetLower().AsUInt32(), i1.GetUpper().AsUInt32());
+
+                return Vector128.Narrow(u0, u1);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private static void StoreUnsigned8Row(
                 Output output,
                 PipelineRow[] input,
@@ -2933,6 +3111,118 @@ namespace JxlSharp.Decoder
                 }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+            private static void StoreFloatRowSimd(
+                Output output,
+                PipelineRow[] input,
+                nuint len,
+                Span<float> dst)
+            {
+                nuint numCh = output.NumChannels;
+                int n       = (int)len;
+
+                if (numCh == 1)
+                {
+                    input[0].AsSpan(0, n).CopyTo(dst.Slice(0, n));
+
+                    return;
+                }
+
+                if (Sse.IsSupported && n >= 4)
+                {
+                    if (numCh == 3)
+                    {
+                        StoreFloatRowRgbSse(input, n, dst);
+
+                        return;
+                    }
+
+                    if (numCh == 4)
+                    {
+                        StoreFloatRowRgbaSse(input, n, dst);
+
+                        return;
+                    }
+                }
+
+                StoreFloatRow(output, input, len, dst);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+            private static void StoreFloatRowRgbSse(PipelineRow[] input, int n, Span<float> dst)
+            {
+                ref float r0Ref = ref MemoryMarshal.GetReference(input[0].AsSpan(0, n));
+                ref float r1Ref = ref MemoryMarshal.GetReference(input[1].AsSpan(0, n));
+                ref float r2Ref = ref MemoryMarshal.GetReference(input[2].AsSpan(0, n));
+                ref float dRef  = ref MemoryMarshal.GetReference(dst);
+                int i           = 0;
+
+                for (; i <= n - 4; i += 4)
+                {
+                    Vector128<float> r    = Vector128.LoadUnsafe(ref r0Ref, (nuint)i);
+                    Vector128<float> g    = Vector128.LoadUnsafe(ref r1Ref, (nuint)i);
+                    Vector128<float> b    = Vector128.LoadUnsafe(ref r2Ref, (nuint)i);
+                    Vector128<float> rgLo = Sse.UnpackLow(r, g);
+                    Vector128<float> rgHi = Sse.UnpackHigh(r, g);
+                    Vector128<float> br01 = Sse.Shuffle(b, rgLo, 0b_10_10_00_00);
+                    Vector128<float> gb11 = Sse.Shuffle(rgLo, b, 0b_01_01_11_11);
+                    Vector128<float> br23 = Sse.Shuffle(b, rgHi, 0b_10_10_10_10);
+                    Vector128<float> gb33 = Sse.Shuffle(rgHi, b, 0b_11_11_11_11);
+                    nuint dstIdx          = (nuint)(i * 3);
+
+                    Sse.Shuffle(rgLo, br01, 0b_10_00_01_00).StoreUnsafe(ref dRef, dstIdx);
+                    Sse.Shuffle(gb11, rgHi, 0b_01_00_10_00).StoreUnsafe(ref dRef, dstIdx + 4u);
+                    Sse.Shuffle(br23, gb33, 0b_10_00_10_00).StoreUnsafe(ref dRef, dstIdx + 8u);
+                }
+
+                for (; i < n; ++i)
+                {
+                    int baseIdx                   = i * 3;
+                    Unsafe.Add(ref dRef, baseIdx) = Unsafe.Add(ref r0Ref, i);
+                    Unsafe.Add(ref dRef, baseIdx + 1) = Unsafe.Add(ref r1Ref, i);
+                    Unsafe.Add(ref dRef, baseIdx + 2) = Unsafe.Add(ref r2Ref, i);
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+            private static void StoreFloatRowRgbaSse(PipelineRow[] input, int n, Span<float> dst)
+            {
+                ref float r0Ref = ref MemoryMarshal.GetReference(input[0].AsSpan(0, n));
+                ref float r1Ref = ref MemoryMarshal.GetReference(input[1].AsSpan(0, n));
+                ref float r2Ref = ref MemoryMarshal.GetReference(input[2].AsSpan(0, n));
+                ref float r3Ref = ref MemoryMarshal.GetReference(input[3].AsSpan(0, n));
+                ref float dRef  = ref MemoryMarshal.GetReference(dst);
+                int i           = 0;
+
+                for (; i <= n - 4; i += 4)
+                {
+                    Vector128<float> r    = Vector128.LoadUnsafe(ref r0Ref, (nuint)i);
+                    Vector128<float> g    = Vector128.LoadUnsafe(ref r1Ref, (nuint)i);
+                    Vector128<float> b    = Vector128.LoadUnsafe(ref r2Ref, (nuint)i);
+                    Vector128<float> a    = Vector128.LoadUnsafe(ref r3Ref, (nuint)i);
+                    Vector128<float> rgLo = Sse.UnpackLow(r, g);
+                    Vector128<float> baLo = Sse.UnpackLow(b, a);
+                    Vector128<float> rgHi = Sse.UnpackHigh(r, g);
+                    Vector128<float> baHi = Sse.UnpackHigh(b, a);
+                    nuint dstIdx          = (nuint)(i * 4);
+
+                    Sse.Shuffle(rgLo, baLo, 0x44).StoreUnsafe(ref dRef, dstIdx);
+                    Sse.Shuffle(rgLo, baLo, 0xEE).StoreUnsafe(ref dRef, dstIdx + 4u);
+                    Sse.Shuffle(rgHi, baHi, 0x44).StoreUnsafe(ref dRef, dstIdx + 8u);
+                    Sse.Shuffle(rgHi, baHi, 0xEE).StoreUnsafe(ref dRef, dstIdx + 12u);
+                }
+
+                for (; i < n; ++i)
+                {
+                    int baseIdx                       = i * 4;
+                    Unsafe.Add(ref dRef, baseIdx)     = Unsafe.Add(ref r0Ref, i);
+                    Unsafe.Add(ref dRef, baseIdx + 1) = Unsafe.Add(ref r1Ref, i);
+                    Unsafe.Add(ref dRef, baseIdx + 2) = Unsafe.Add(ref r2Ref, i);
+                    Unsafe.Add(ref dRef, baseIdx + 3) = Unsafe.Add(ref r3Ref, i);
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private static void StoreFloatRow(
                 Output output,
                 PipelineRow[] input,
@@ -2977,6 +3267,7 @@ namespace JxlSharp.Decoder
                 }
             }
 
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private void WriteToOutput<T>(
                 Output output,
                 nuint threadId,

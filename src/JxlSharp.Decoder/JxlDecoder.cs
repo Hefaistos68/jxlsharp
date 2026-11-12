@@ -1546,13 +1546,13 @@ namespace JxlSharp.Decoder
             _simpleImageOutCallback = callback;
             _simpleImageOutOpaque   = opaque;
 
-            JxlImageOutInitCallback initCb = (_, _, _) => this;
-            JxlImageOutRunCallback runCb   = (runOpaque, _, x, y, numPixels, pixels) =>
+            JxlImageOutInitCallback initCb = static (initOpaque, _, _) => initOpaque;
+            JxlImageOutRunCallback runCb   = static (runOpaque, _, x, y, numPixels, pixels) =>
             {
                 JxlDecoder self = (JxlDecoder)runOpaque!;
                 self._simpleImageOutCallback!(self._simpleImageOutOpaque, x, y, numPixels, pixels);
             };
-            JxlImageOutDestroyCallback destroyCb = _ => { };
+            JxlImageOutDestroyCallback destroyCb = static _ => { };
 
             return SetMultithreadedImageOutCallback(format, initCb, runCb, destroyCb, this);
         }

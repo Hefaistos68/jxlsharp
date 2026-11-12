@@ -136,9 +136,10 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ushort ReadSymbol(BitReader br)
         {
-            int idx          = (int)br.PeekBits(KHuffmanTableBits);
-            HuffmanCode code = Table[idx];
-            int nBits        = code.Bits;
+            ref HuffmanCode tableRef = ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(Table);
+            int idx                  = (int)br.PeekFixedBits(KHuffmanTableBits);
+            HuffmanCode code         = Unsafe.Add(ref tableRef, idx);
+            int nBits                = code.Bits;
 
             if (nBits > KHuffmanTableBits)
             {
@@ -146,7 +147,7 @@ namespace JxlSharp.Decoder
                 nBits -= KHuffmanTableBits;
                 idx   += code.Value;
                 idx   += (int)br.PeekBits((nuint)nBits);
-                code   = Table[idx];
+                code   = Unsafe.Add(ref tableRef, idx);
             }
 
             br.Consume(code.Bits);

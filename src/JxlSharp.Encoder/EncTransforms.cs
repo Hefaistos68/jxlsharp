@@ -5,6 +5,8 @@
 
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
@@ -141,6 +143,52 @@ namespace JxlSharp.Encoder
         /// <param name="coeffs">Span of 16 output AFV coefficients.</param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void AFVDCT4x4(ReadOnlySpan<float> pixels, Span<float> coeffs)
+        {
+            if (Vector256.IsHardwareAccelerated && pixels.Length >= 16 && coeffs.Length >= 16)
+            {
+                ref float pRef        = ref MemoryMarshal.GetReference(pixels);
+                ref float bRef        = ref MemoryMarshal.GetArrayDataReference(Afv4x4BasisTransposedFlat);
+                ref float cRef        = ref MemoryMarshal.GetReference(coeffs);
+                Vector256<float> acc0 = Vector256<float>.Zero;
+                Vector256<float> acc1 = Vector256<float>.Zero;
+
+                for (int i = 0; i < 16; ++i)
+                {
+                    Vector256<float> px = Vector256.Create(Unsafe.Add(ref pRef, i));
+                    nuint bOff          = (nuint)(i * 16);
+
+                    acc0 = Vector256.FusedMultiplyAdd(px, Vector256.LoadUnsafe(ref bRef, bOff), acc0);
+                    acc1 = Vector256.FusedMultiplyAdd(px, Vector256.LoadUnsafe(ref bRef, bOff + 8u), acc1);
+                }
+
+                acc0.StoreUnsafe(ref cRef);
+                acc1.StoreUnsafe(ref cRef, 8u);
+
+                return;
+            }
+
+            AFVDCT4x4Scalar(pixels, coeffs);
+        }
+
+        private static readonly float[] Afv4x4BasisTransposedFlat = BuildAfv4x4BasisTransposedFlat();
+
+        private static float[] BuildAfv4x4BasisTransposedFlat()
+        {
+            float[] flat = new float[256];
+
+            for (int i = 0; i < 16; i++)
+            {
+                for (int j = 0; j < 16; j++)
+                {
+                    flat[(i * 16) + j] = Afv4x4Basis[j][i];
+                }
+            }
+
+            return flat;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void AFVDCT4x4Scalar(ReadOnlySpan<float> pixels, Span<float> coeffs)
         {
             for (int j = 0; j < 16; ++j)
             {
@@ -403,6 +451,29 @@ namespace JxlSharp.Encoder
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StoreHalfSubblock4x8(int offset, ReadOnlySpan<float> block, Span<float> coefficients, out float dcVal)
+        {
+            if (Vector256.IsHardwareAccelerated && block.Length >= 32 && coefficients.Length >= ((offset + 6) * 8) + 8)
+            {
+                ref float bRef  = ref MemoryMarshal.GetReference(block);
+                ref float cRef  = ref MemoryMarshal.GetReference(coefficients);
+                nuint off0      = (nuint)(offset * 8);
+                float savedOrig = Unsafe.Add(ref cRef, off0);
+
+                dcVal = bRef;
+                Vector256.LoadUnsafe(ref bRef).StoreUnsafe(ref cRef, off0);
+                Vector256.LoadUnsafe(ref bRef, 8u).StoreUnsafe(ref cRef, (nuint)((offset + 2) * 8));
+                Vector256.LoadUnsafe(ref bRef, 16u).StoreUnsafe(ref cRef, (nuint)((offset + 4) * 8));
+                Vector256.LoadUnsafe(ref bRef, 24u).StoreUnsafe(ref cRef, (nuint)((offset + 6) * 8));
+                Unsafe.Add(ref cRef, off0) = savedOrig;
+
+                return;
+            }
+
+            StoreHalfSubblock4x8Scalar(offset, block, coefficients, out dcVal);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void StoreHalfSubblock4x8Scalar(int offset, ReadOnlySpan<float> block, Span<float> coefficients, out float dcVal)
         {
             dcVal = block[0];
 

@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Numerics;
 using JxlSharp.Base;
 using ThreadPool = JxlSharp.Base.ThreadPool;
 
@@ -1686,6 +1687,7 @@ namespace JxlSharp.Decoder
             return rect.Row(plane, y);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvertGrayRowToRgb(
             ReadOnlySpan<int> rowIn,
             Span<float> outR,
@@ -1718,6 +1720,7 @@ namespace JxlSharp.Decoder
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvertSingleRow(
             ReadOnlySpan<int> rowIn,
             Span<float> rowOut,
@@ -1726,6 +1729,12 @@ namespace JxlSharp.Decoder
             float factorF,
             bool fastFloat)
         {
+            if (fastFloat)
+            {
+                ConvertSingleRowFastSimd(rowIn, rowOut, (int)xsize, factorF);
+
+                return;
+            }
             if (fastFloat)
             {
                 for (nuint x = 0; x < xsize; x++)
@@ -1739,6 +1748,37 @@ namespace JxlSharp.Decoder
                 {
                     rowOut[(int)x] = (float)(rowIn[(int)x] * factor);
                 }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ConvertSingleRowFastSimd(
+            ReadOnlySpan<int> rowIn,
+            Span<float> rowOut,
+            int n,
+            float factorF)
+        {
+            int x          = 0;
+            ref int inRef  = ref MemoryMarshal.GetReference(rowIn);
+            ref float outR = ref MemoryMarshal.GetReference(rowOut);
+
+            if (Vector.IsHardwareAccelerated)
+            {
+                int vecLen           = Vector<float>.Count;
+                Vector<float> vScale = new Vector<float>(factorF);
+
+                for (; x <= n - vecLen; x += vecLen)
+                {
+                    Vector<int> vIn    = Vector.LoadUnsafe(ref inRef, (nuint)x);
+                    Vector<float> vOut = Vector.ConvertToSingle(vIn) * vScale;
+
+                    vOut.StoreUnsafe(ref outR, (nuint)x);
+                }
+            }
+
+            for (; x < n; x++)
+            {
+                Unsafe.Add(ref outR, x) = Unsafe.Add(ref inRef, x) * factorF;
             }
         }
 

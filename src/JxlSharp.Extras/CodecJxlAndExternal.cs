@@ -58,6 +58,7 @@ namespace JxlSharp.Extras
             SizeConstraints? constraints = null)
         {
             Status.ClearLastFailure();
+            PackedFrame? reusableFrame = ppf.Frames.Count > 0 ? ppf.Frames[0] : null;
             decodedBytes = 0;
             ppf.Frames.Clear();
 
@@ -75,7 +76,10 @@ namespace JxlSharp.Extras
                 return false;
             }
 
-            JxlDecodeLoopState state = new JxlDecodeLoopState(dec, dparams, ppf, jpegBytes, constraints, inputBytes.Length);
+            JxlDecodeLoopState state = new JxlDecodeLoopState(dec, dparams, ppf, jpegBytes, constraints, inputBytes.Length)
+            {
+                ReusableFrame = reusableFrame,
+            };
 
             if (!RunDecoderEventLoop(state))
             {
@@ -650,6 +654,7 @@ namespace JxlSharp.Extras
             public readonly PackedPixelFile Ppf;
             public readonly List<byte>? JpegBytes;
             public readonly SizeConstraints? Constraints;
+            public PackedFrame? ReusableFrame;
             public bool Done;
 
             private JxlPixelFormat _format;
@@ -1126,18 +1131,50 @@ namespace JxlSharp.Extras
                 uint xsize = frameHeader.LayerInfo.XSize > 0 ? frameHeader.LayerInfo.XSize : Ppf.Info.XSize;
                 uint ysize = frameHeader.LayerInfo.YSize > 0 ? frameHeader.LayerInfo.YSize : Ppf.Info.YSize;
 
-                StatusOr<PackedFrame> frameOr = PackedFrame.Create(xsize, ysize, in _format);
-
-                if (!frameOr.IsOk)
+                if (!TryAcquireFrame(xsize, ysize, out PackedFrame? acquired) || acquired is null)
                 {
                     return false;
                 }
 
-                PackedFrame frame = frameOr.Value;
+                PackedFrame frame = acquired;
+
                 frame.FrameInfo   = frameHeader;
                 frame.Name        = frameName;
                 Ppf.Frames.Add(frame);
                 _numPasses        = 0;
+
+                return true;
+            }
+
+            private bool TryAcquireFrame(uint xsize, uint ysize, out PackedFrame? frame)
+            {
+                PackedFrame? candidate = ReusableFrame;
+                ReusableFrame          = null;
+
+                if (candidate is not null &&
+                    candidate.Color.XSize == xsize &&
+                    candidate.Color.YSize == ysize &&
+                    candidate.Color.Format.NumChannels == _format.NumChannels &&
+                    candidate.Color.Format.DataType == _format.DataType &&
+                    candidate.Color.Format.Endianness == _format.Endianness &&
+                    candidate.Color.Format.Align == _format.Align)
+                {
+                    candidate.ExtraChannels.Clear();
+                    frame = candidate;
+
+                    return true;
+                }
+
+                StatusOr<PackedFrame> frameOr = PackedFrame.Create(xsize, ysize, in _format);
+
+                if (!frameOr.IsOk)
+                {
+                    frame = null;
+
+                    return false;
+                }
+
+                frame = frameOr.Value;
 
                 return true;
             }

@@ -197,7 +197,9 @@ namespace JxlSharp.Decoder
             nuint i   = value >> (int)logEntrySize;
             nuint pos = value & entrySizeMinus1;
 
-            ref readonly Entry e  = ref tables[(int)(tableOffset + i)];
+            ref Entry e           = ref Unsafe.Add(
+                ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(tables),
+                tableOffset + i);
             nuint cutoff          = e.Cutoff;
             nuint rightValue      = e.RightValue;
             nuint freq0           = e.Freq0;

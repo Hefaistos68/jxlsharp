@@ -11,6 +11,9 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 using JxlSharp.Decoder;
 
@@ -109,10 +112,32 @@ namespace JxlSharp.Encoder
 
             if (fast)
             {
-                float ca = 0.0f;
+                float ca      = 0.0f;
+                float cbSimd  = 0.0f;
+                int simdIdx   = 0;
+
+                if (Vector256.IsHardwareAccelerated && numValues >= 8 && valuesM.Length >= numValues && valuesS.Length >= numValues)
+                {
+                    ref float mRef       = ref MemoryMarshal.GetReference(valuesM);
+                    ref float sRef       = ref MemoryMarshal.GetReference(valuesS);
+                    Vector256<float> vCa = Vector256<float>.Zero;
+                    Vector256<float> vCb = Vector256<float>.Zero;
+
+                    for (; simdIdx + 8 <= numValues; simdIdx += 8)
+                    {
+                        Vector256<float> va = Vector256.LoadUnsafe(ref mRef, (nuint)simdIdx);
+                        Vector256<float> vb = Vector256.LoadUnsafe(ref sRef, (nuint)simdIdx);
+
+                        vCa = Vector256.FusedMultiplyAdd(va, va, vCa);
+                        vCb = Vector256.FusedMultiplyAdd(va, vb, vCb);
+                    }
+
+                    ca     = Vector256.Sum(vCa);
+                    cbSimd = Vector256.Sum(vCb);
+                }
                 float cb = 0.0f;
 
-                for (int i = 0; i < numValues; ++i)
+                for (int i = simdIdx; i < numValues; ++i)
                 {
                     float a = valuesM[i];
                     float b = valuesS[i];
@@ -121,7 +146,8 @@ namespace JxlSharp.Encoder
                     cb += a * b;
                 }
 
-                x = -cb / (ca + 1e-9f);
+                cb += cbSimd;
+                x   = -cb / (ca + 1e-9f);
             }
             else
             {
@@ -177,8 +203,32 @@ namespace JxlSharp.Encoder
         {
             const float kEps = 1.0f;
             float cost       = 2.0f * (x - baseValue) * invColorFactor * distanceMul;
+            int simdIdx      = 0;
 
-            for (int i = 0; i < numValues; ++i)
+            if (Vector256.IsHardwareAccelerated && numValues >= 8 && valuesM.Length >= numValues && valuesS.Length >= numValues)
+            {
+                ref float mRef          = ref MemoryMarshal.GetReference(valuesM);
+                ref float sRef          = ref MemoryMarshal.GetReference(valuesS);
+                Vector256<float> vx     = Vector256.Create(x);
+                Vector256<float> vEps   = Vector256.Create(kEps);
+                Vector256<float> vNeg   = Vector256.Create(-kEps);
+                Vector256<float> accVec = Vector256<float>.Zero;
+
+                for (; simdIdx + 8 <= numValues; simdIdx += 8)
+                {
+                    Vector256<float> vm  = Vector256.LoadUnsafe(ref mRef, (nuint)simdIdx);
+                    Vector256<float> vs  = Vector256.LoadUnsafe(ref sRef, (nuint)simdIdx);
+                    Vector256<float> vv  = Vector256.FusedMultiplyAdd(vm, vx, vs);
+                    Vector256<float> pos = vm & Vector256.GreaterThanOrEqual(vv, vEps);
+                    Vector256<float> neg = vm & Vector256.LessThan(vv, vNeg);
+
+                    accVec += pos - neg;
+                }
+
+                cost += Vector256.Sum(accVec);
+            }
+
+            for (int i = simdIdx; i < numValues; ++i)
             {
                 float m = valuesM[i];
                 float v = m * x + valuesS[i];
@@ -253,9 +303,9 @@ namespace JxlSharp.Encoder
                         for (nuint bx = 0; bx < xsizeBlocks; ++bx)
                         {
                             int idx   = rowBase + (int)bx;
-                            float dcY = ComputeBlockDc(planeY, bx, by);
-                            float dcX = ComputeBlockDc(planeX, bx, by);
-                            float dcB = ComputeBlockDc(planeB, bx, by);
+                            float dcY = ComputeBlockDcFast(planeY, bx, by);
+                            float dcX = ComputeBlockDcFast(planeX, bx, by);
+                            float dcB = ComputeBlockDcFast(planeB, bx, by);
                             float qy  = QuantizeCoefficient(dcY, invDcStepY) * dcStepY;
 
                             dcScratch[idx]                 = qy * invDcStepX;
@@ -413,7 +463,7 @@ namespace JxlSharp.Encoder
                 Span<float> coeffY  = stackalloc float[64];
                 Span<float> coeffX  = stackalloc float[64];
                 Span<float> coeffB  = stackalloc float[64];
-                Span<float> scratch = stackalloc float[256];
+                Span<float> scratch = Avx.IsSupported ? Span<float>.Empty : stackalloc float[256];
 
                 ReadOnlySpan<float> invMatrixX = dequant.InvMatrixSpan(AcStrategyType.DCT, 0, 64);
                 ReadOnlySpan<float> invMatrixY = dequant.InvMatrixSpan(AcStrategyType.DCT, 1, 64);
@@ -424,9 +474,9 @@ namespace JxlSharp.Encoder
                 {
                     for (nuint bx = bx0; bx < bx1; ++bx)
                     {
-                        ExtractBlockCoeffs(opsin.Plane(1), bx, by, pix, coeffY, scratch);
-                        ExtractBlockCoeffs(opsin.Plane(0), bx, by, pix, coeffX, scratch);
-                        ExtractBlockCoeffs(opsin.Plane(2), bx, by, pix, coeffB, scratch);
+                        ExtractBlockCoeffsFast(opsin.Plane(1), bx, by, pix, coeffY, scratch);
+                        ExtractBlockCoeffsFast(opsin.Plane(0), bx, by, pix, coeffX, scratch);
+                        ExtractBlockCoeffsFast(opsin.Plane(2), bx, by, pix, coeffB, scratch);
 
                         for (int k = 1; k < (int)FrameDimensions.kDCTBlockSize; ++k)
                         {
@@ -510,6 +560,57 @@ namespace JxlSharp.Encoder
                 FrameDimensions.kBlockDim,
                 coeffBuffer,
                 scratchSpace);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ComputeBlockDcFast(ImagePlane<float> plane, nuint bx, nuint by)
+        {
+            nuint x0 = bx * FrameDimensions.kBlockDim;
+            nuint y0 = by * FrameDimensions.kBlockDim;
+
+            if (Vector256.IsHardwareAccelerated &&
+                x0 + FrameDimensions.kBlockDim <= plane.XSize &&
+                y0 + FrameDimensions.kBlockDim <= plane.YSize)
+            {
+                ReadOnlySpan<float> span = plane.ConstRowAt(y0, (int)x0);
+                ref float rRef           = ref MemoryMarshal.GetReference(span);
+                nuint st                 = (nuint)plane.PixelsPerRow;
+                Vector256<float> s0      = Vector256.LoadUnsafe(ref rRef) + Vector256.LoadUnsafe(ref rRef, st);
+                Vector256<float> s1      = Vector256.LoadUnsafe(ref rRef, st * 2u) + Vector256.LoadUnsafe(ref rRef, st * 3u);
+                Vector256<float> s2      = Vector256.LoadUnsafe(ref rRef, st * 4u) + Vector256.LoadUnsafe(ref rRef, st * 5u);
+                Vector256<float> s3      = Vector256.LoadUnsafe(ref rRef, st * 6u) + Vector256.LoadUnsafe(ref rRef, st * 7u);
+
+                return Vector256.Sum((s0 + s1) + (s2 + s3)) * (1.0f / 64.0f);
+            }
+
+            return ComputeBlockDc(plane, bx, by);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void ExtractBlockCoeffsFast(
+            ImagePlane<float> plane,
+            nuint bx,
+            nuint by,
+            Span<float> blockBuffer,
+            Span<float> coeffBuffer,
+            Span<float> scratchSpace)
+        {
+            nuint x0 = bx * FrameDimensions.kBlockDim;
+            nuint y0 = by * FrameDimensions.kBlockDim;
+
+            if (x0 + FrameDimensions.kBlockDim <= plane.XSize && y0 + FrameDimensions.kBlockDim <= plane.YSize)
+            {
+                EncTransforms.TransformFromPixels(
+                    AcStrategyType.DCT,
+                    plane.ConstRowAt(y0, (int)x0),
+                    (nuint)plane.PixelsPerRow,
+                    coeffBuffer,
+                    scratchSpace);
+
+                return;
+            }
+
+            ExtractBlockCoeffs(plane, bx, by, blockBuffer, coeffBuffer, scratchSpace);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1237,6 +1338,44 @@ namespace JxlSharp.Encoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Load8x8Block(Image3<float> src, nuint bx, nuint by, Span<float> block)
         {
+            nuint x0 = bx * FrameDimensions.kBlockDim;
+            nuint y0 = by * FrameDimensions.kBlockDim;
+
+            if (Vector256.IsHardwareAccelerated &&
+                x0 + FrameDimensions.kBlockDim <= src.XSize &&
+                y0 + FrameDimensions.kBlockDim <= src.YSize &&
+                block.Length >= 192)
+            {
+                int ix0        = (int)x0;
+                ref float dRef = ref MemoryMarshal.GetReference(block);
+
+                for (int c = 0; c < 3; ++c)
+                {
+                    ImagePlane<float> plane  = src.Plane((nuint)c);
+                    ReadOnlySpan<float> span = plane.ConstRowAt(y0, ix0);
+                    ref float sRef           = ref MemoryMarshal.GetReference(span);
+                    nuint st                 = (nuint)plane.PixelsPerRow;
+                    nuint dBase              = (nuint)(c * 64);
+
+                    Vector256.LoadUnsafe(ref sRef).StoreUnsafe(ref dRef, dBase);
+                    Vector256.LoadUnsafe(ref sRef, st).StoreUnsafe(ref dRef, dBase + 8u);
+                    Vector256.LoadUnsafe(ref sRef, st * 2u).StoreUnsafe(ref dRef, dBase + 16u);
+                    Vector256.LoadUnsafe(ref sRef, st * 3u).StoreUnsafe(ref dRef, dBase + 24u);
+                    Vector256.LoadUnsafe(ref sRef, st * 4u).StoreUnsafe(ref dRef, dBase + 32u);
+                    Vector256.LoadUnsafe(ref sRef, st * 5u).StoreUnsafe(ref dRef, dBase + 40u);
+                    Vector256.LoadUnsafe(ref sRef, st * 6u).StoreUnsafe(ref dRef, dBase + 48u);
+                    Vector256.LoadUnsafe(ref sRef, st * 7u).StoreUnsafe(ref dRef, dBase + 56u);
+                }
+
+                return;
+            }
+
+            Load8x8BlockScalar(src, bx, by, block);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Load8x8BlockScalar(Image3<float> src, nuint bx, nuint by, Span<float> block)
+        {
             nuint x0    = bx * FrameDimensions.kBlockDim;
             nuint y0    = by * FrameDimensions.kBlockDim;
             nuint xsize = src.XSize;
@@ -1289,7 +1428,7 @@ namespace JxlSharp.Encoder
             Span<float> coeffs,
             Span<float> recon)
         {
-            Span<float> scratch = stackalloc float[256];
+            Span<float> scratch = Avx.IsSupported ? Span<float>.Empty : stackalloc float[256];
 
             for (int c = 0; c < 3; ++c)
             {
@@ -1320,6 +1459,92 @@ namespace JxlSharp.Encoder
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private float QuantizeAndDequantize8x8(
+            AcStrategyType strategy,
+            float quant,
+            float cmapX,
+            float cmapB,
+            float costDelta,
+            float zerosMul,
+            Span<float> coeffs)
+        {
+            if (Vector256.IsHardwareAccelerated && coeffs.Length >= 192)
+            {
+                return QuantizeAndDequantize8x8Avx(strategy, quant, (cmapX, cmapB), (costDelta, zerosMul), coeffs);
+            }
+
+            return QuantizeAndDequantize8x8Scalar(strategy, quant, (cmapX, cmapB), (costDelta, zerosMul), coeffs);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private float QuantizeAndDequantize8x8Avx(
+            AcStrategyType strategy,
+            float quant,
+            (float CmapX, float CmapB) cmap,
+            (float CostDelta, float ZerosMul) costs,
+            Span<float> coeffs)
+        {
+            float entropy        = 0.0f;
+            ref float coeffsBase = ref MemoryMarshal.GetReference(coeffs);
+            ref float cYRef      = ref Unsafe.Add(ref coeffsBase, 64);
+            Vector256<float> vQ  = Vector256.Create(quant);
+
+            for (int c = 0; c < 3; ++c)
+            {
+                ReadOnlySpan<float> invMat  = _config.Dequant!.InvMatrixSpan(strategy, (nuint)c, 64);
+                ReadOnlySpan<float> mat     = _config.Dequant.MatrixSpan(strategy, (nuint)c, 64);
+                ref float invRef            = ref MemoryMarshal.GetReference(invMat);
+                ref float matRef            = ref MemoryMarshal.GetReference(mat);
+                ref float cChanRef          = ref Unsafe.Add(ref coeffsBase, c * 64);
+                float cflFactor             = c == 0 ? cmap.CmapX : (c == 2 ? cmap.CmapB : 0.0f);
+                Vector256<float> vCfl       = Vector256.Create(cflFactor);
+                Vector256<float> entropyVec = Vector256<float>.Zero;
+                uint numNzeros              = 0;
+
+                for (int k = 0; k < 64; k += 8)
+                {
+                    nuint uk                = (nuint)k;
+                    Vector256<float> vc     = Vector256.LoadUnsafe(ref cChanRef, uk);
+                    Vector256<float> vy     = Vector256.LoadUnsafe(ref cYRef, uk);
+                    Vector256<float> vInv   = Vector256.LoadUnsafe(ref invRef, uk) * vQ;
+                    Vector256<float> vMat   = Vector256.LoadUnsafe(ref matRef, uk);
+                    Vector256<float> val    = (vc - (vCfl * vy)) * vInv;
+                    Vector256<float> rval   = Vector256.Round(val);
+                    Vector256<float> diff   = val - rval;
+                    Vector256<float> q      = Vector256.Abs(rval);
+                    Vector256<float> isZero = Vector256.Equals(q, Vector256<float>.Zero);
+                    uint nzMask             = (~isZero.ExtractMostSignificantBits()) & 0xFFu;
+
+                    entropyVec += Vector256.Sqrt(q);
+                    numNzeros  += (uint)BitOperations.PopCount(nzMask);
+                    (vMat * diff).StoreUnsafe(ref cChanRef, uk);
+                }
+
+                entropy   += costs.CostDelta * Vector256.Sum(entropyVec);
+                uint nbits = (uint)Bits.CeilLog2Nonzero(numNzeros + 1) + 1;
+                entropy   += costs.ZerosMul * ((uint)Bits.CeilLog2Nonzero(nbits + 17) + nbits);
+            }
+
+            return entropy;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private float QuantizeAndDequantize8x8Scalar(
+            AcStrategyType strategy,
+            float quant,
+            (float CmapX, float CmapB) cmap,
+            (float CostDelta, float ZerosMul) costs,
+            Span<float> coeffs)
+        {
+            float cmapX     = cmap.CmapX;
+            float cmapB     = cmap.CmapB;
+            float costDelta = costs.CostDelta;
+            float zerosMul  = costs.ZerosMul;
+
+            return QuantizeAndDequantize8x8Orig(strategy, quant, cmapX, cmapB, costDelta, zerosMul, coeffs);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private float QuantizeAndDequantize8x8Orig(
             AcStrategyType strategy,
             float quant,
             float cmapX,
@@ -1369,6 +1594,55 @@ namespace JxlSharp.Encoder
             float masking,
             float quant)
         {
+            if (Vector256.IsHardwareAccelerated && reconError.Length >= 192)
+            {
+                return Compute8x8LossAvx(reconError, masking, quant);
+            }
+
+            return Compute8x8LossFallback(reconError, masking, quant);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static float Compute8x8LossAvx(
+            ReadOnlySpan<float> reconError,
+            float masking,
+            float quant)
+        {
+            ReadOnlySpan<float> maskuLut   = stackalloc float[] { 12.0f, 0.0f, 4.0f };
+            ReadOnlySpan<float> channelMul = stackalloc float[] { 20441408.0f, 1.0f, 1.2667701f };
+            ref float errBase              = ref MemoryMarshal.GetReference(reconError);
+            float loss                     = 0.0f;
+
+            for (int c = 0; c < 3; ++c)
+            {
+                Vector256<float> vMask  = Vector256.Create(masking + maskuLut[c]);
+                Vector256<float> accVec = Vector256<float>.Zero;
+                int baseOff             = c * 64;
+
+                for (int i = 0; i < 64; i += 8)
+                {
+                    Vector256<float> v  = vMask * Vector256.LoadUnsafe(ref errBase, (nuint)(baseOff + i));
+                    Vector256<float> v2 = v * v;
+                    Vector256<float> v4 = v2 * v2;
+
+                    accVec = Vector256.FusedMultiplyAdd(v4, v4, accVec);
+                }
+
+                loss += channelMul[c] * Vector256.Sum(accVec);
+            }
+
+            float scaledLoss = loss * (1.0f / 64.0f);
+            float eighthRoot = MathF.Sqrt(MathF.Sqrt(MathF.Sqrt(scaledLoss)));
+
+            return eighthRoot * 64.0f / MathF.Max(1e-4f, quant);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static float Compute8x8LossFallback(
+            ReadOnlySpan<float> reconError,
+            float masking,
+            float quant)
+        {
             ReadOnlySpan<float> maskuLut   = stackalloc float[] { 12.0f, 0.0f, 4.0f };
             ReadOnlySpan<float> channelMul = stackalloc float[] { 20441408.0f, 1.0f, 1.2667701f };
             float loss                     = 0.0f;
@@ -1390,7 +1664,10 @@ namespace JxlSharp.Encoder
                 loss += channelMul[c] * lossc;
             }
 
-            return MathF.Pow(loss * (1.0f / 64.0f), 0.125f) * 64.0f / MathF.Max(1e-4f, quant);
+            float scaledLoss = loss * (1.0f / 64.0f);
+            float eighthRoot = MathF.Sqrt(MathF.Sqrt(MathF.Sqrt(scaledLoss)));
+
+            return eighthRoot * 64.0f / MathF.Max(1e-4f, quant);
         }
 
         private static void CountStrategyTypes(

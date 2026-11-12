@@ -7,6 +7,8 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 using JxlSharp.Cms;
@@ -103,6 +105,94 @@ namespace JxlSharp.Encoder
             ReadOnlySpan<float> premulAbsorb,
             nuint xsize)
         {
+            if (Vector256.IsHardwareAccelerated &&
+                xsize >= 8u &&
+                premulAbsorb.Length >= 12 &&
+                row0.Length >= (int)xsize &&
+                row1.Length >= (int)xsize &&
+                row2.Length >= (int)xsize)
+            {
+                LinearRGBRowToXYBAvx(row0, row1, row2, premulAbsorb, xsize);
+
+                return;
+            }
+
+            LinearRGBRowToXYBScalar(row0, row1, row2, premulAbsorb, xsize);
+        }
+
+        private static readonly TfSrgb SrgbTf = new TfSrgb();
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void LinearRGBRowToXYBAvx(
+            Span<float> row0,
+            Span<float> row1,
+            Span<float> row2,
+            ReadOnlySpan<float> premulAbsorb,
+            nuint xsize)
+        {
+            float negBias0       = premulAbsorb.Length >= 15 ? premulAbsorb[12] : -MathF.Cbrt(premulAbsorb[9]);
+            float negBias1       = premulAbsorb.Length >= 15 ? premulAbsorb[13] : -MathF.Cbrt(premulAbsorb[10]);
+            float negBias2       = premulAbsorb.Length >= 15 ? premulAbsorb[14] : -MathF.Cbrt(premulAbsorb[11]);
+            Vector256<float> p0  = Vector256.Create(premulAbsorb[0]);
+            Vector256<float> p1  = Vector256.Create(premulAbsorb[1]);
+            Vector256<float> p2  = Vector256.Create(premulAbsorb[2]);
+            Vector256<float> p3  = Vector256.Create(premulAbsorb[3]);
+            Vector256<float> p4  = Vector256.Create(premulAbsorb[4]);
+            Vector256<float> p5  = Vector256.Create(premulAbsorb[5]);
+            Vector256<float> p6  = Vector256.Create(premulAbsorb[6]);
+            Vector256<float> p7  = Vector256.Create(premulAbsorb[7]);
+            Vector256<float> p8  = Vector256.Create(premulAbsorb[8]);
+            Vector256<float> p9  = Vector256.Create(premulAbsorb[9]);
+            Vector256<float> p10 = Vector256.Create(premulAbsorb[10]);
+            Vector256<float> p11 = Vector256.Create(premulAbsorb[11]);
+            Vector256<float> nb0 = Vector256.Create(negBias0);
+            Vector256<float> nb1 = Vector256.Create(negBias1);
+            Vector256<float> nb2 = Vector256.Create(negBias2);
+            Vector256<float> z   = Vector256<float>.Zero;
+            Vector256<float> hlf = Vector256.Create(0.5f);
+            ref float r0Ref      = ref MemoryMarshal.GetReference(row0);
+            ref float r1Ref      = ref MemoryMarshal.GetReference(row1);
+            ref float r2Ref      = ref MemoryMarshal.GetReference(row2);
+            nuint x              = 0;
+
+            for (; x + 8u <= xsize; x += 8u)
+            {
+                Vector256<float> r  = Vector256.LoadUnsafe(ref r0Ref, x);
+                Vector256<float> g  = Vector256.LoadUnsafe(ref r1Ref, x);
+                Vector256<float> b  = Vector256.LoadUnsafe(ref r2Ref, x);
+                Vector256<float> m0 = Vector256.Max(z, (p0 * r) + (p1 * g) + (p2 * b) + p9);
+                Vector256<float> m1 = Vector256.Max(z, (p3 * r) + (p4 * g) + (p5 * b) + p10);
+                Vector256<float> m2 = Vector256.Max(z, (p6 * r) + (p7 * g) + (p8 * b) + p11);
+                Vector256<float> c0 = FastMath.CubeRootAndAddSimd(m0, nb0);
+                Vector256<float> c1 = FastMath.CubeRootAndAddSimd(m1, nb1);
+                Vector256<float> c2 = FastMath.CubeRootAndAddSimd(m2, nb2);
+
+                (hlf * (c0 - c1)).StoreUnsafe(ref r0Ref, x);
+                (hlf * (c0 + c1)).StoreUnsafe(ref r1Ref, x);
+                c2.StoreUnsafe(ref r2Ref, x);
+            }
+
+            if (x < xsize)
+            {
+                int remStart = (int)x;
+
+                LinearRGBRowToXYBScalar(
+                    row0.Slice(remStart),
+                    row1.Slice(remStart),
+                    row2.Slice(remStart),
+                    premulAbsorb,
+                    xsize - x);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void LinearRGBRowToXYBScalar(
+            Span<float> row0,
+            Span<float> row1,
+            Span<float> row2,
+            ReadOnlySpan<float> premulAbsorb,
+            nuint xsize)
+        {
             float negBias0 = premulAbsorb.Length >= 15
                 ? premulAbsorb[12]
                 : -MathF.Cbrt(premulAbsorb[9]);
@@ -144,6 +234,99 @@ namespace JxlSharp.Encoder
         /// <param name="xyb">Destination XYB image.</param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void ConvertRowToXyb(
+            bool hasRgba,
+            bool isLinear,
+            Image3<float> src,
+            Rect srcRect,
+            nuint y,
+            ReadOnlySpan<float> premulAbsorb,
+            Image3<float> xyb)
+        {
+            if (Vector128.IsHardwareAccelerated && srcRect.XSize >= 4)
+            {
+                ConvertRowToXybSimd(hasRgba, isLinear, src, srcRect, y, premulAbsorb, xyb);
+
+                return;
+            }
+
+            ConvertRowToXybScalar(hasRgba, isLinear, src, srcRect, y, premulAbsorb, xyb);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ConvertRowToXybSimd(
+            bool hasRgba,
+            bool isLinear,
+            Image3<float> src,
+            Rect srcRect,
+            nuint y,
+            ReadOnlySpan<float> premulAbsorb,
+            Image3<float> xyb)
+        {
+            nuint xsize                 = (nuint)srcRect.XSize;
+            int n                       = (int)xsize;
+            ReadOnlySpan<float> srcRow0 = srcRect.ConstPlaneRow(src, 0, y);
+            Span<float> dstRow0         = xyb.PlaneRow(0, y);
+            Span<float> dstRow1         = xyb.PlaneRow(1, y);
+            Span<float> dstRow2         = xyb.PlaneRow(2, y);
+
+            if (isLinear)
+            {
+                srcRow0.Slice(0, n).CopyTo(dstRow0);
+
+                if (hasRgba)
+                {
+                    srcRect.ConstPlaneRow(src, 1, y).Slice(0, n).CopyTo(dstRow1);
+                    srcRect.ConstPlaneRow(src, 2, y).Slice(0, n).CopyTo(dstRow2);
+                }
+                else
+                {
+                    srcRow0.Slice(0, n).CopyTo(dstRow1);
+                    srcRow0.Slice(0, n).CopyTo(dstRow2);
+                }
+            }
+            else
+            {
+                ConvertSrgbSpanToLinearSimd(srcRow0, dstRow0, n);
+
+                if (hasRgba)
+                {
+                    ConvertSrgbSpanToLinearSimd(srcRect.ConstPlaneRow(src, 1, y), dstRow1, n);
+                    ConvertSrgbSpanToLinearSimd(srcRect.ConstPlaneRow(src, 2, y), dstRow2, n);
+                }
+                else
+                {
+                    dstRow0.Slice(0, n).CopyTo(dstRow1);
+                    dstRow0.Slice(0, n).CopyTo(dstRow2);
+                }
+            }
+
+            LinearRGBRowToXYB(dstRow0, dstRow1, dstRow2, premulAbsorb, xsize);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ConvertSrgbSpanToLinearSimd(ReadOnlySpan<float> src, Span<float> dst, int count)
+        {
+            ref float sRef = ref MemoryMarshal.GetReference(src);
+            ref float dRef = ref MemoryMarshal.GetReference(dst);
+            TfSrgb tf      = SrgbTf;
+            int i          = 0;
+
+            for (; i + 4 <= count; i += 4)
+            {
+                nuint ui          = (nuint)i;
+                Vector128<float> v = Vector128.LoadUnsafe(ref sRef, ui);
+
+                tf.DisplayFromEncoded(v).StoreUnsafe(ref dRef, ui);
+            }
+
+            for (; i < count; ++i)
+            {
+                Unsafe.Add(ref dRef, i) = tf.DisplayFromEncoded(Unsafe.Add(ref sRef, i));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ConvertRowToXybScalar(
             bool hasRgba,
             bool isLinear,
             Image3<float> src,

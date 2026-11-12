@@ -260,5 +260,38 @@ namespace JxlSharp.Base
 
             return r;
         }
+
+        /// <summary>
+        /// Evaluates 8 lanes of <c>cbrt(x) + add</c> with 6 ulp max error.
+        /// </summary>
+        /// <param name="x">Non-negative input vector.</param>
+        /// <param name="add">Bias vector to add to each cube root.</param>
+        /// <returns>Approximate vector of <c>cbrt(x) + add</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> CubeRootAndAddSimd(Vector256<float> x, Vector256<float> add)
+        {
+            Vector256<int> expBias = Vector256.Create(0x54800000);
+            Vector256<int> expMul  = Vector256.Create(0x002AAAAA);
+            Vector256<float> k1_3  = Vector256.Create(1.0f / 3.0f);
+            Vector256<float> k4_3  = Vector256.Create(4.0f / 3.0f);
+            Vector256<float> xa3   = k1_3 * x;
+            Vector256<int> m1      = x.AsInt32();
+            Vector256<int> isZero  = Vector256.Equals(m1, Vector256<int>.Zero);
+            Vector256<int> approx  = expBias - (Vector256.ShiftRightArithmetic(m1, 23) * expMul);
+            Vector256<float> r     = Vector256.AndNot(approx, isZero).AsSingle();
+
+            for (int i = 0; i < 3; i++)
+            {
+                Vector256<float> r2 = r * r;
+                r                   = Vector256.FusedMultiplyAdd(-xa3, r2 * r2, k4_3 * r);
+            }
+
+            Vector256<float> r2Final = r * r;
+            r                        = Vector256.FusedMultiplyAdd(k1_3, Vector256.FusedMultiplyAdd(-x, r2Final * r2Final, r), r);
+            r2Final                  = r * r;
+
+            return Vector256.FusedMultiplyAdd(r2Final, x, add);
+        }
+
     }
 }

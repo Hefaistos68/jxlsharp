@@ -5,6 +5,9 @@
 
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Runtime.CompilerServices;
 using JxlSharp.Base;
 
@@ -397,6 +400,19 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Run(nuint rows, nuint cols, DctFrom from, DctTo to)
         {
+            if (Avx.IsSupported && rows >= 8u && cols >= 8u && ((rows | cols) & 7u) == 0u)
+            {
+                DecTransforms.TransposeTiled8x8Avx(rows, cols, from, to);
+
+                return;
+            }
+
+            RunScalar(rows, cols, from, to);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void RunScalar(nuint rows, nuint cols, DctFrom from, DctTo to)
+        {
             for (nuint n = 0; n < rows; ++n)
             {
                 for (nuint m = 0; m < cols; ++m)
@@ -573,6 +589,17 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void ComputeScaledDCT(int rows, int cols, DctFrom from, Span<float> to, Span<float> scratchSpace)
         {
+            if (TryComputeScaledDctSimd(rows, cols, from, to))
+            {
+                return;
+            }
+
+            ComputeScaledDctScalar(rows, cols, from, to, scratchSpace);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledDctScalar(int rows, int cols, DctFrom from, Span<float> to, Span<float> scratchSpace)
+        {
             Span<float> block = scratchSpace;
             Span<float> tmp   = scratchSpace.Slice(rows * cols);
             nuint uRows       = (nuint)rows;
@@ -604,6 +631,17 @@ namespace JxlSharp.Decoder
         /// <param name="scratchSpace">Scratch buffer of length at least <c>4 * rows * cols</c>.</param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void ComputeScaledIDCT(int rows, int cols, Span<float> from, DctTo to, Span<float> scratchSpace)
+        {
+            if (TryComputeScaledIdctSimd(rows, cols, from, to))
+            {
+                return;
+            }
+
+            ComputeScaledIdctScalar(rows, cols, from, to, scratchSpace);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledIdctScalar(int rows, int cols, Span<float> from, DctTo to, Span<float> scratchSpace)
         {
             Span<float> block = scratchSpace;
             Span<float> tmp   = scratchSpace.Slice(rows * cols);
@@ -668,6 +706,35 @@ namespace JxlSharp.Decoder
         /// <param name="pixels">Span of 16 output pixels.</param>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void AFVIDCT4x4(ReadOnlySpan<float> coeffs, Span<float> pixels)
+        {
+            if (Vector256.IsHardwareAccelerated && coeffs.Length >= 16 && pixels.Length >= 16)
+            {
+                ref float cRef        = ref MemoryMarshal.GetReference(coeffs);
+                ref float bRef        = ref MemoryMarshal.GetArrayDataReference(Afv4x4BasisFlat);
+                ref float pRef        = ref MemoryMarshal.GetReference(pixels);
+                Vector256<float> acc0 = Vector256<float>.Zero;
+                Vector256<float> acc1 = Vector256<float>.Zero;
+
+                for (int j = 0; j < 16; j++)
+                {
+                    Vector256<float> cf = Vector256.Create(Unsafe.Add(ref cRef, j));
+                    nuint bOff          = (nuint)(j * 16);
+
+                    acc0 = Vector256.FusedMultiplyAdd(cf, Vector256.LoadUnsafe(ref bRef, bOff), acc0);
+                    acc1 = Vector256.FusedMultiplyAdd(cf, Vector256.LoadUnsafe(ref bRef, bOff + 8u), acc1);
+                }
+
+                acc0.StoreUnsafe(ref pRef);
+                acc1.StoreUnsafe(ref pRef, 8u);
+
+                return;
+            }
+
+            AFVIDCT4x4Scalar(coeffs, pixels);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void AFVIDCT4x4Scalar(ReadOnlySpan<float> coeffs, Span<float> pixels)
         {
             for (int i = 0; i < 16; i++)
             {
@@ -939,6 +1006,26 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void ExtractHalfSubblock4x8(int offset, float dcVal, ReadOnlySpan<float> coefficients, Span<float> block)
         {
+            if (Vector256.IsHardwareAccelerated && coefficients.Length >= ((offset + 6) * 8) + 8 && block.Length >= 32)
+            {
+                ref float cRef = ref MemoryMarshal.GetReference(coefficients);
+                ref float bRef = ref MemoryMarshal.GetReference(block);
+
+                Vector256.LoadUnsafe(ref cRef, (nuint)(offset * 8)).StoreUnsafe(ref bRef);
+                Vector256.LoadUnsafe(ref cRef, (nuint)((offset + 2) * 8)).StoreUnsafe(ref bRef, 8u);
+                Vector256.LoadUnsafe(ref cRef, (nuint)((offset + 4) * 8)).StoreUnsafe(ref bRef, 16u);
+                Vector256.LoadUnsafe(ref cRef, (nuint)((offset + 6) * 8)).StoreUnsafe(ref bRef, 24u);
+                bRef = dcVal;
+
+                return;
+            }
+
+            ExtractHalfSubblock4x8Scalar(offset, dcVal, coefficients, block);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void ExtractHalfSubblock4x8Scalar(int offset, float dcVal, ReadOnlySpan<float> coefficients, Span<float> block)
+        {
             block[0] = dcVal;
 
             for (int iy = 0; iy < 4; iy++)
@@ -1073,7 +1160,7 @@ namespace JxlSharp.Decoder
             Span<float> pixels,
             nuint pixelsStride)
         {
-            Span<float> scratchSpace = stackalloc float[4 * 8 * 4];
+            Span<float> scratchSpace = Avx.IsSupported ? Span<float>.Empty : stackalloc float[4 * 8 * 4];
             int afvX                 = afvKind & 1;
             int afvY                 = afvKind / 2;
             float block00            = coefficients[0];
@@ -1441,6 +1528,713 @@ namespace JxlSharp.Decoder
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StoreToBlockAndScale(int n, int sz, ReadOnlySpan<float> coeff, DctTo to)
+        {
+            float mul = 1.0f / n;
+
+            for (int i = 0; i < n; i++)
+            {
+                ReadOnlySpan<float> src = coeff.Slice(i * sz);
+                Span<float> dst         = to.Slice((nuint)i, 0);
+
+                for (int k = 0; k < sz; k++)
+                {
+                    dst[k] = src[k] * mul;
+                }
+            }
+        }
+
+        private static readonly float[] Afv4x4BasisFlat = BuildAfv4x4BasisFlat();
+
+        private static float[] BuildAfv4x4BasisFlat()
+        {
+            float[] flat = new float[256];
+
+            for (int j = 0; j < 16; j++)
+            {
+                Afv4x4Basis[j].AsSpan(0, 16).CopyTo(flat.AsSpan(j * 16, 16));
+            }
+
+            return flat;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool HasBlockBounds(int rows, int cols, nuint stride, int len)
+        {
+            return len >= ((rows - 1) * (int)stride) + cols;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool TryComputeScaledDctSimd(int rows, int cols, DctFrom from, Span<float> to)
+        {
+            if (!Sse.IsSupported || to.Length < rows * cols || !HasBlockBounds(rows, cols, from.Stride, from.Data.Length))
+            {
+                return false;
+            }
+
+            if (rows == 8 && cols == 8 && Avx.IsSupported)
+            {
+                ComputeScaledDct8x8Avx(from, to);
+
+                return true;
+            }
+
+            if (rows == 4 && cols == 4)
+            {
+                ComputeScaledDct4x4Sse(from, to);
+
+                return true;
+            }
+
+            if (rows == 4 && cols == 8 && Avx.IsSupported)
+            {
+                ComputeScaledDct4x8Avx(from, to);
+
+                return true;
+            }
+
+            if (rows == 8 && cols == 4 && Avx.IsSupported)
+            {
+                ComputeScaledDct8x4Avx(from, to);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool TryComputeScaledIdctSimd(int rows, int cols, ReadOnlySpan<float> from, DctTo to)
+        {
+            if (!Sse.IsSupported || from.Length < rows * cols || !HasBlockBounds(rows, cols, to.Stride, to.Data.Length))
+            {
+                return false;
+            }
+
+            if (rows == 8 && cols == 8 && Avx.IsSupported)
+            {
+                ComputeScaledIdct8x8Avx(from, to);
+
+                return true;
+            }
+
+            if (rows == 4 && cols == 4)
+            {
+                ComputeScaledIdct4x4Sse(from, to);
+
+                return true;
+            }
+
+            if (rows == 4 && cols == 8 && Avx.IsSupported)
+            {
+                ComputeScaledIdct4x8Avx(from, to);
+
+                return true;
+            }
+
+            if (rows == 8 && cols == 4 && Avx.IsSupported)
+            {
+                ComputeScaledIdct8x4Avx(from, to);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        internal static void TransposeTiled8x8Avx(nuint rows, nuint cols, DctFrom from, DctTo to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from.Data);
+            ref float dstRef = ref MemoryMarshal.GetReference(to.Data);
+            nuint srcStride  = from.Stride;
+            nuint dstStride  = to.Stride;
+
+            for (nuint by = 0; by < rows; by += 8u)
+            {
+                for (nuint bx = 0; bx < cols; bx += 8u)
+                {
+                    nuint sBase = (by * srcStride) + bx;
+                    nuint dBase = (bx * dstStride) + by;
+                    var lo = (
+                        Vector256.LoadUnsafe(ref srcRef, sBase),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + srcStride),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (2u * srcStride)),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (3u * srcStride)));
+                    var hi = (
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (4u * srcStride)),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (5u * srcStride)),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (6u * srcStride)),
+                        Vector256.LoadUnsafe(ref srcRef, sBase + (7u * srcStride)));
+
+                    Transpose8x8Avx(ref lo, ref hi);
+
+                    lo.Item1.StoreUnsafe(ref dstRef, dBase);
+                    lo.Item2.StoreUnsafe(ref dstRef, dBase + dstStride);
+                    lo.Item3.StoreUnsafe(ref dstRef, dBase + (2u * dstStride));
+                    lo.Item4.StoreUnsafe(ref dstRef, dBase + (3u * dstStride));
+                    hi.Item1.StoreUnsafe(ref dstRef, dBase + (4u * dstStride));
+                    hi.Item2.StoreUnsafe(ref dstRef, dBase + (5u * dstStride));
+                    hi.Item3.StoreUnsafe(ref dstRef, dBase + (6u * dstStride));
+                    hi.Item4.StoreUnsafe(ref dstRef, dBase + (7u * dstStride));
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledDct8x8Avx(DctFrom from, Span<float> to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from.Data);
+            ref float dstRef = ref MemoryMarshal.GetReference(to);
+            nuint s          = from.Stride;
+            var lo = (
+                Vector256.LoadUnsafe(ref srcRef),
+                Vector256.LoadUnsafe(ref srcRef, s),
+                Vector256.LoadUnsafe(ref srcRef, 2u * s),
+                Vector256.LoadUnsafe(ref srcRef, 3u * s));
+            var hi = (
+                Vector256.LoadUnsafe(ref srcRef, 4u * s),
+                Vector256.LoadUnsafe(ref srcRef, 5u * s),
+                Vector256.LoadUnsafe(ref srcRef, 6u * s),
+                Vector256.LoadUnsafe(ref srcRef, 7u * s));
+
+            Dct8AndScaleAvx(ref lo, ref hi);
+            Transpose8x8Avx(ref lo, ref hi);
+            Dct8AndScaleAvx(ref lo, ref hi);
+
+            lo.Item1.StoreUnsafe(ref dstRef);
+            lo.Item2.StoreUnsafe(ref dstRef, 8u);
+            lo.Item3.StoreUnsafe(ref dstRef, 16u);
+            lo.Item4.StoreUnsafe(ref dstRef, 24u);
+            hi.Item1.StoreUnsafe(ref dstRef, 32u);
+            hi.Item2.StoreUnsafe(ref dstRef, 40u);
+            hi.Item3.StoreUnsafe(ref dstRef, 48u);
+            hi.Item4.StoreUnsafe(ref dstRef, 56u);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledIdct8x8Avx(ReadOnlySpan<float> from, DctTo to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from);
+            ref float dstRef = ref MemoryMarshal.GetReference(to.Data);
+            nuint s          = to.Stride;
+            var lo = (
+                Vector256.LoadUnsafe(ref srcRef),
+                Vector256.LoadUnsafe(ref srcRef, 8u),
+                Vector256.LoadUnsafe(ref srcRef, 16u),
+                Vector256.LoadUnsafe(ref srcRef, 24u));
+            var hi = (
+                Vector256.LoadUnsafe(ref srcRef, 32u),
+                Vector256.LoadUnsafe(ref srcRef, 40u),
+                Vector256.LoadUnsafe(ref srcRef, 48u),
+                Vector256.LoadUnsafe(ref srcRef, 56u));
+
+            Idct8Avx(ref lo, ref hi);
+            Transpose8x8Avx(ref lo, ref hi);
+            Idct8Avx(ref lo, ref hi);
+
+            lo.Item1.StoreUnsafe(ref dstRef);
+            lo.Item2.StoreUnsafe(ref dstRef, s);
+            lo.Item3.StoreUnsafe(ref dstRef, 2u * s);
+            lo.Item4.StoreUnsafe(ref dstRef, 3u * s);
+            hi.Item1.StoreUnsafe(ref dstRef, 4u * s);
+            hi.Item2.StoreUnsafe(ref dstRef, 5u * s);
+            hi.Item3.StoreUnsafe(ref dstRef, 6u * s);
+            hi.Item4.StoreUnsafe(ref dstRef, 7u * s);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledDct4x4Sse(DctFrom from, Span<float> to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from.Data);
+            ref float dstRef = ref MemoryMarshal.GetReference(to);
+            nuint s          = from.Stride;
+            var v = (
+                Vector128.LoadUnsafe(ref srcRef),
+                Vector128.LoadUnsafe(ref srcRef, s),
+                Vector128.LoadUnsafe(ref srcRef, 2u * s),
+                Vector128.LoadUnsafe(ref srcRef, 3u * s));
+
+            Dct4AndScaleSse(ref v);
+            Transpose4x4Sse(ref v);
+            Dct4AndScaleSse(ref v);
+
+            v.Item1.StoreUnsafe(ref dstRef);
+            v.Item2.StoreUnsafe(ref dstRef, 4u);
+            v.Item3.StoreUnsafe(ref dstRef, 8u);
+            v.Item4.StoreUnsafe(ref dstRef, 12u);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledIdct4x4Sse(ReadOnlySpan<float> from, DctTo to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from);
+            ref float dstRef = ref MemoryMarshal.GetReference(to.Data);
+            nuint s          = to.Stride;
+            var v = (
+                Vector128.LoadUnsafe(ref srcRef),
+                Vector128.LoadUnsafe(ref srcRef, 4u),
+                Vector128.LoadUnsafe(ref srcRef, 8u),
+                Vector128.LoadUnsafe(ref srcRef, 12u));
+
+            Idct4Sse(ref v);
+            Transpose4x4Sse(ref v);
+            Idct4Sse(ref v);
+
+            v.Item1.StoreUnsafe(ref dstRef);
+            v.Item2.StoreUnsafe(ref dstRef, s);
+            v.Item3.StoreUnsafe(ref dstRef, 2u * s);
+            v.Item4.StoreUnsafe(ref dstRef, 3u * s);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledDct4x8Avx(DctFrom from, Span<float> to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from.Data);
+            ref float dstRef = ref MemoryMarshal.GetReference(to);
+            nuint s          = from.Stride;
+            var v = (
+                Vector256.LoadUnsafe(ref srcRef),
+                Vector256.LoadUnsafe(ref srcRef, s),
+                Vector256.LoadUnsafe(ref srcRef, 2u * s),
+                Vector256.LoadUnsafe(ref srcRef, 3u * s));
+
+            Dct4AndScaleAvx(ref v);
+
+            var cLo = (v.Item1.GetLower(), v.Item2.GetLower(), v.Item3.GetLower(), v.Item4.GetLower());
+            var cHi = (v.Item1.GetUpper(), v.Item2.GetUpper(), v.Item3.GetUpper(), v.Item4.GetUpper());
+
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+            Dct8AndScaleSse(ref cLo, ref cHi);
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+
+            Vector256.Create(cLo.Item1, cHi.Item1).StoreUnsafe(ref dstRef);
+            Vector256.Create(cLo.Item2, cHi.Item2).StoreUnsafe(ref dstRef, 8u);
+            Vector256.Create(cLo.Item3, cHi.Item3).StoreUnsafe(ref dstRef, 16u);
+            Vector256.Create(cLo.Item4, cHi.Item4).StoreUnsafe(ref dstRef, 24u);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledIdct4x8Avx(ReadOnlySpan<float> from, DctTo to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from);
+            ref float dstRef = ref MemoryMarshal.GetReference(to.Data);
+            nuint s          = to.Stride;
+            Vector256<float> r0 = Vector256.LoadUnsafe(ref srcRef);
+            Vector256<float> r1 = Vector256.LoadUnsafe(ref srcRef, 8u);
+            Vector256<float> r2 = Vector256.LoadUnsafe(ref srcRef, 16u);
+            Vector256<float> r3 = Vector256.LoadUnsafe(ref srcRef, 24u);
+            var cLo             = (r0.GetLower(), r1.GetLower(), r2.GetLower(), r3.GetLower());
+            var cHi             = (r0.GetUpper(), r1.GetUpper(), r2.GetUpper(), r3.GetUpper());
+
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+            Idct8Sse(ref cLo, ref cHi);
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+
+            var v = (
+                Vector256.Create(cLo.Item1, cHi.Item1),
+                Vector256.Create(cLo.Item2, cHi.Item2),
+                Vector256.Create(cLo.Item3, cHi.Item3),
+                Vector256.Create(cLo.Item4, cHi.Item4));
+
+            Idct4Avx(ref v);
+
+            v.Item1.StoreUnsafe(ref dstRef);
+            v.Item2.StoreUnsafe(ref dstRef, s);
+            v.Item3.StoreUnsafe(ref dstRef, 2u * s);
+            v.Item4.StoreUnsafe(ref dstRef, 3u * s);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledDct8x4Avx(DctFrom from, Span<float> to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from.Data);
+            ref float dstRef = ref MemoryMarshal.GetReference(to);
+            nuint s          = from.Stride;
+            var cLo = (
+                Vector128.LoadUnsafe(ref srcRef),
+                Vector128.LoadUnsafe(ref srcRef, s),
+                Vector128.LoadUnsafe(ref srcRef, 2u * s),
+                Vector128.LoadUnsafe(ref srcRef, 3u * s));
+            var cHi = (
+                Vector128.LoadUnsafe(ref srcRef, 4u * s),
+                Vector128.LoadUnsafe(ref srcRef, 5u * s),
+                Vector128.LoadUnsafe(ref srcRef, 6u * s),
+                Vector128.LoadUnsafe(ref srcRef, 7u * s));
+
+            Dct8AndScaleSse(ref cLo, ref cHi);
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+
+            var v = (
+                Vector256.Create(cLo.Item1, cHi.Item1),
+                Vector256.Create(cLo.Item2, cHi.Item2),
+                Vector256.Create(cLo.Item3, cHi.Item3),
+                Vector256.Create(cLo.Item4, cHi.Item4));
+
+            Dct4AndScaleAvx(ref v);
+
+            v.Item1.StoreUnsafe(ref dstRef);
+            v.Item2.StoreUnsafe(ref dstRef, 8u);
+            v.Item3.StoreUnsafe(ref dstRef, 16u);
+            v.Item4.StoreUnsafe(ref dstRef, 24u);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void ComputeScaledIdct8x4Avx(ReadOnlySpan<float> from, DctTo to)
+        {
+            ref float srcRef = ref MemoryMarshal.GetReference(from);
+            ref float dstRef = ref MemoryMarshal.GetReference(to.Data);
+            nuint s          = to.Stride;
+            var v = (
+                Vector256.LoadUnsafe(ref srcRef),
+                Vector256.LoadUnsafe(ref srcRef, 8u),
+                Vector256.LoadUnsafe(ref srcRef, 16u),
+                Vector256.LoadUnsafe(ref srcRef, 24u));
+
+            Idct4Avx(ref v);
+
+            var cLo = (v.Item1.GetLower(), v.Item2.GetLower(), v.Item3.GetLower(), v.Item4.GetLower());
+            var cHi = (v.Item1.GetUpper(), v.Item2.GetUpper(), v.Item3.GetUpper(), v.Item4.GetUpper());
+
+            Transpose4x4Sse(ref cLo);
+            Transpose4x4Sse(ref cHi);
+            Idct8Sse(ref cLo, ref cHi);
+
+            cLo.Item1.StoreUnsafe(ref dstRef);
+            cLo.Item2.StoreUnsafe(ref dstRef, s);
+            cLo.Item3.StoreUnsafe(ref dstRef, 2u * s);
+            cLo.Item4.StoreUnsafe(ref dstRef, 3u * s);
+            cHi.Item1.StoreUnsafe(ref dstRef, 4u * s);
+            cHi.Item2.StoreUnsafe(ref dstRef, 5u * s);
+            cHi.Item3.StoreUnsafe(ref dstRef, 6u * s);
+            cHi.Item4.StoreUnsafe(ref dstRef, 7u * s);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Transpose8x8Avx(
+            ref (Vector256<float> R0, Vector256<float> R1, Vector256<float> R2, Vector256<float> R3) lo,
+            ref (Vector256<float> R4, Vector256<float> R5, Vector256<float> R6, Vector256<float> R7) hi)
+        {
+            Vector256<float> t0 = Avx.UnpackLow(lo.R0, lo.R1);
+            Vector256<float> t1 = Avx.UnpackHigh(lo.R0, lo.R1);
+            Vector256<float> t2 = Avx.UnpackLow(lo.R2, lo.R3);
+            Vector256<float> t3 = Avx.UnpackHigh(lo.R2, lo.R3);
+            Vector256<float> t4 = Avx.UnpackLow(hi.R4, hi.R5);
+            Vector256<float> t5 = Avx.UnpackHigh(hi.R4, hi.R5);
+            Vector256<float> t6 = Avx.UnpackLow(hi.R6, hi.R7);
+            Vector256<float> t7 = Avx.UnpackHigh(hi.R6, hi.R7);
+
+            Vector256<float> s0 = Avx.Shuffle(t0, t2, 0x44);
+            Vector256<float> s1 = Avx.Shuffle(t0, t2, 0xEE);
+            Vector256<float> s2 = Avx.Shuffle(t1, t3, 0x44);
+            Vector256<float> s3 = Avx.Shuffle(t1, t3, 0xEE);
+            Vector256<float> s4 = Avx.Shuffle(t4, t6, 0x44);
+            Vector256<float> s5 = Avx.Shuffle(t4, t6, 0xEE);
+            Vector256<float> s6 = Avx.Shuffle(t5, t7, 0x44);
+            Vector256<float> s7 = Avx.Shuffle(t5, t7, 0xEE);
+
+            lo.R0 = Avx.Permute2x128(s0, s4, 0x20);
+            lo.R1 = Avx.Permute2x128(s1, s5, 0x20);
+            lo.R2 = Avx.Permute2x128(s2, s6, 0x20);
+            lo.R3 = Avx.Permute2x128(s3, s7, 0x20);
+            hi.R4 = Avx.Permute2x128(s0, s4, 0x31);
+            hi.R5 = Avx.Permute2x128(s1, s5, 0x31);
+            hi.R6 = Avx.Permute2x128(s2, s6, 0x31);
+            hi.R7 = Avx.Permute2x128(s3, s7, 0x31);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Transpose4x4Sse(
+            ref (Vector128<float> R0, Vector128<float> R1, Vector128<float> R2, Vector128<float> R3) v)
+        {
+            Vector128<float> t0 = Sse.UnpackLow(v.R0, v.R1);
+            Vector128<float> t1 = Sse.UnpackHigh(v.R0, v.R1);
+            Vector128<float> t2 = Sse.UnpackLow(v.R2, v.R3);
+            Vector128<float> t3 = Sse.UnpackHigh(v.R2, v.R3);
+
+            v.R0 = Sse.Shuffle(t0, t2, 0x44);
+            v.R1 = Sse.Shuffle(t0, t2, 0xEE);
+            v.R2 = Sse.Shuffle(t1, t3, 0x44);
+            v.R3 = Sse.Shuffle(t1, t3, 0xEE);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Dct4AndScaleAvx(
+            ref (Vector256<float> R0, Vector256<float> R1, Vector256<float> R2, Vector256<float> R3) v)
+        {
+            Vector256<float> m0    = Vector256.Create(0.541196100146197f);
+            Vector256<float> m1    = Vector256.Create(1.3065629648763764f);
+            Vector256<float> sqrt2 = Vector256.Create(DctScales.kSqrt2);
+            Vector256<float> qtr   = Vector256.Create(0.25f);
+
+            Vector256<float> a0 = v.R0 + v.R3;
+            Vector256<float> a1 = v.R1 + v.R2;
+            Vector256<float> s0 = (v.R0 - v.R3) * m0;
+            Vector256<float> s1 = (v.R1 - v.R2) * m1;
+            Vector256<float> d0 = s0 + s1;
+            Vector256<float> d1 = s0 - s1;
+
+            v.R0 = (a0 + a1) * qtr;
+            v.R1 = Vector256.FusedMultiplyAdd(d0, sqrt2, d1) * qtr;
+            v.R2 = (a0 - a1) * qtr;
+            v.R3 = d1 * qtr;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Idct4Avx(
+            ref (Vector256<float> R0, Vector256<float> R1, Vector256<float> R2, Vector256<float> R3) v)
+        {
+            Vector256<float> m0    = Vector256.Create(0.541196100146197f);
+            Vector256<float> m1    = Vector256.Create(1.3065629648763764f);
+            Vector256<float> negM0 = Vector256.Create(-0.541196100146197f);
+            Vector256<float> negM1 = Vector256.Create(-1.3065629648763764f);
+            Vector256<float> sqrt2 = Vector256.Create(DctScales.kSqrt2);
+
+            Vector256<float> e0 = v.R0 + v.R2;
+            Vector256<float> e1 = v.R0 - v.R2;
+            Vector256<float> b1 = v.R3 + v.R1;
+            Vector256<float> b0 = v.R1 * sqrt2;
+            Vector256<float> o0 = b0 + b1;
+            Vector256<float> o1 = b0 - b1;
+
+            v.R0 = Vector256.FusedMultiplyAdd(m0, o0, e0);
+            v.R1 = Vector256.FusedMultiplyAdd(m1, o1, e1);
+            v.R2 = Vector256.FusedMultiplyAdd(negM1, o1, e1);
+            v.R3 = Vector256.FusedMultiplyAdd(negM0, o0, e0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Dct4AndScaleSse(
+            ref (Vector128<float> R0, Vector128<float> R1, Vector128<float> R2, Vector128<float> R3) v)
+        {
+            Vector128<float> m0    = Vector128.Create(0.541196100146197f);
+            Vector128<float> m1    = Vector128.Create(1.3065629648763764f);
+            Vector128<float> sqrt2 = Vector128.Create(DctScales.kSqrt2);
+            Vector128<float> qtr   = Vector128.Create(0.25f);
+
+            Vector128<float> a0 = v.R0 + v.R3;
+            Vector128<float> a1 = v.R1 + v.R2;
+            Vector128<float> s0 = (v.R0 - v.R3) * m0;
+            Vector128<float> s1 = (v.R1 - v.R2) * m1;
+            Vector128<float> d0 = s0 + s1;
+            Vector128<float> d1 = s0 - s1;
+
+            v.R0 = (a0 + a1) * qtr;
+            v.R1 = Vector128.FusedMultiplyAdd(d0, sqrt2, d1) * qtr;
+            v.R2 = (a0 - a1) * qtr;
+            v.R3 = d1 * qtr;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Idct4Sse(
+            ref (Vector128<float> R0, Vector128<float> R1, Vector128<float> R2, Vector128<float> R3) v)
+        {
+            Vector128<float> m0    = Vector128.Create(0.541196100146197f);
+            Vector128<float> m1    = Vector128.Create(1.3065629648763764f);
+            Vector128<float> negM0 = Vector128.Create(-0.541196100146197f);
+            Vector128<float> negM1 = Vector128.Create(-1.3065629648763764f);
+            Vector128<float> sqrt2 = Vector128.Create(DctScales.kSqrt2);
+
+            Vector128<float> e0 = v.R0 + v.R2;
+            Vector128<float> e1 = v.R0 - v.R2;
+            Vector128<float> b1 = v.R3 + v.R1;
+            Vector128<float> b0 = v.R1 * sqrt2;
+            Vector128<float> o0 = b0 + b1;
+            Vector128<float> o1 = b0 - b1;
+
+            v.R0 = Vector128.FusedMultiplyAdd(m0, o0, e0);
+            v.R1 = Vector128.FusedMultiplyAdd(m1, o1, e1);
+            v.R2 = Vector128.FusedMultiplyAdd(negM1, o1, e1);
+            v.R3 = Vector128.FusedMultiplyAdd(negM0, o0, e0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Dct8AndScaleAvx(
+            ref (Vector256<float> R0, Vector256<float> R1, Vector256<float> R2, Vector256<float> R3) lo,
+            ref (Vector256<float> R4, Vector256<float> R5, Vector256<float> R6, Vector256<float> R7) hi)
+        {
+            Vector256<float> m0    = Vector256.Create(0.541196100146197f);
+            Vector256<float> m1    = Vector256.Create(1.3065629648763764f);
+            Vector256<float> sqrt2 = Vector256.Create(DctScales.kSqrt2);
+            Vector256<float> scale = Vector256.Create(0.125f);
+
+            Vector256<float> e0 = lo.R0 + hi.R7;
+            Vector256<float> e1 = lo.R1 + hi.R6;
+            Vector256<float> e2 = lo.R2 + hi.R5;
+            Vector256<float> e3 = lo.R3 + hi.R4;
+
+            Vector256<float> ea0 = e0 + e3;
+            Vector256<float> ea1 = e1 + e2;
+            Vector256<float> es0 = (e0 - e3) * m0;
+            Vector256<float> es1 = (e1 - e2) * m1;
+            Vector256<float> ed0 = es0 + es1;
+            Vector256<float> ed1 = es0 - es1;
+
+            e0 = ea0 + ea1;
+            e1 = Vector256.FusedMultiplyAdd(ed0, sqrt2, ed1);
+            e2 = ea0 - ea1;
+            e3 = ed1;
+
+            Vector256<float> o0 = (lo.R0 - hi.R7) * Vector256.Create(0.5097955791041592f);
+            Vector256<float> o1 = (lo.R1 - hi.R6) * Vector256.Create(0.6013448869350453f);
+            Vector256<float> o2 = (lo.R2 - hi.R5) * Vector256.Create(0.8999762231364156f);
+            Vector256<float> o3 = (lo.R3 - hi.R4) * Vector256.Create(2.5629154477415055f);
+
+            Vector256<float> oa0 = o0 + o3;
+            Vector256<float> oa1 = o1 + o2;
+            Vector256<float> os0 = (o0 - o3) * m0;
+            Vector256<float> os1 = (o1 - o2) * m1;
+            Vector256<float> od0 = os0 + os1;
+            Vector256<float> od1 = os0 - os1;
+
+            Vector256<float> bo0 = oa0 + oa1;
+            Vector256<float> bo1 = Vector256.FusedMultiplyAdd(od0, sqrt2, od1);
+            Vector256<float> bo2 = oa0 - oa1;
+            Vector256<float> bo3 = od1;
+
+            bo0  = Vector256.FusedMultiplyAdd(bo0, sqrt2, bo1);
+            bo1 += bo2;
+            bo2 += bo3;
+
+            lo.R0 = e0 * scale;
+            lo.R1 = bo0 * scale;
+            lo.R2 = e1 * scale;
+            lo.R3 = bo1 * scale;
+            hi.R4 = e2 * scale;
+            hi.R5 = bo2 * scale;
+            hi.R6 = e3 * scale;
+            hi.R7 = bo3 * scale;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Idct8Avx(
+            ref (Vector256<float> R0, Vector256<float> R1, Vector256<float> R2, Vector256<float> R3) lo,
+            ref (Vector256<float> R4, Vector256<float> R5, Vector256<float> R6, Vector256<float> R7) hi)
+        {
+            var e = (lo.R0, lo.R2, hi.R4, hi.R6);
+            var o = (lo.R1, lo.R3, hi.R5, hi.R7);
+
+            Idct4Avx(ref e);
+
+            o.Item4 += o.Item3;
+            o.Item3 += o.Item2;
+            o.Item2 += o.Item1;
+            o.Item1 *= Vector256.Create(DctScales.kSqrt2);
+
+            Idct4Avx(ref o);
+
+            Vector256<float> w0 = Vector256.Create(0.5097955791041592f);
+            Vector256<float> w1 = Vector256.Create(0.6013448869350453f);
+            Vector256<float> w2 = Vector256.Create(0.8999762231364156f);
+            Vector256<float> w3 = Vector256.Create(2.5629154477415055f);
+
+            lo.R0 = Vector256.FusedMultiplyAdd(w0, o.Item1, e.Item1);
+            hi.R7 = Vector256.FusedMultiplyAdd(-w0, o.Item1, e.Item1);
+            lo.R1 = Vector256.FusedMultiplyAdd(w1, o.Item2, e.Item2);
+            hi.R6 = Vector256.FusedMultiplyAdd(-w1, o.Item2, e.Item2);
+            lo.R2 = Vector256.FusedMultiplyAdd(w2, o.Item3, e.Item3);
+            hi.R5 = Vector256.FusedMultiplyAdd(-w2, o.Item3, e.Item3);
+            lo.R3 = Vector256.FusedMultiplyAdd(w3, o.Item4, e.Item4);
+            hi.R4 = Vector256.FusedMultiplyAdd(-w3, o.Item4, e.Item4);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Dct8AndScaleSse(
+            ref (Vector128<float> R0, Vector128<float> R1, Vector128<float> R2, Vector128<float> R3) lo,
+            ref (Vector128<float> R4, Vector128<float> R5, Vector128<float> R6, Vector128<float> R7) hi)
+        {
+            Vector128<float> m0    = Vector128.Create(0.541196100146197f);
+            Vector128<float> m1    = Vector128.Create(1.3065629648763764f);
+            Vector128<float> sqrt2 = Vector128.Create(DctScales.kSqrt2);
+            Vector128<float> scale = Vector128.Create(0.125f);
+
+            Vector128<float> e0 = lo.R0 + hi.R7;
+            Vector128<float> e1 = lo.R1 + hi.R6;
+            Vector128<float> e2 = lo.R2 + hi.R5;
+            Vector128<float> e3 = lo.R3 + hi.R4;
+
+            Vector128<float> ea0 = e0 + e3;
+            Vector128<float> ea1 = e1 + e2;
+            Vector128<float> es0 = (e0 - e3) * m0;
+            Vector128<float> es1 = (e1 - e2) * m1;
+            Vector128<float> ed0 = es0 + es1;
+            Vector128<float> ed1 = es0 - es1;
+
+            e0 = ea0 + ea1;
+            e1 = Vector128.FusedMultiplyAdd(ed0, sqrt2, ed1);
+            e2 = ea0 - ea1;
+            e3 = ed1;
+
+            Vector128<float> o0 = (lo.R0 - hi.R7) * Vector128.Create(0.5097955791041592f);
+            Vector128<float> o1 = (lo.R1 - hi.R6) * Vector128.Create(0.6013448869350453f);
+            Vector128<float> o2 = (lo.R2 - hi.R5) * Vector128.Create(0.8999762231364156f);
+            Vector128<float> o3 = (lo.R3 - hi.R4) * Vector128.Create(2.5629154477415055f);
+
+            Vector128<float> oa0 = o0 + o3;
+            Vector128<float> oa1 = o1 + o2;
+            Vector128<float> os0 = (o0 - o3) * m0;
+            Vector128<float> os1 = (o1 - o2) * m1;
+            Vector128<float> od0 = os0 + os1;
+            Vector128<float> od1 = os0 - os1;
+
+            Vector128<float> bo0 = oa0 + oa1;
+            Vector128<float> bo1 = Vector128.FusedMultiplyAdd(od0, sqrt2, od1);
+            Vector128<float> bo2 = oa0 - oa1;
+            Vector128<float> bo3 = od1;
+
+            bo0  = Vector128.FusedMultiplyAdd(bo0, sqrt2, bo1);
+            bo1 += bo2;
+            bo2 += bo3;
+
+            lo.R0 = e0 * scale;
+            lo.R1 = bo0 * scale;
+            lo.R2 = e1 * scale;
+            lo.R3 = bo1 * scale;
+            hi.R4 = e2 * scale;
+            hi.R5 = bo2 * scale;
+            hi.R6 = e3 * scale;
+            hi.R7 = bo3 * scale;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Idct8Sse(
+            ref (Vector128<float> R0, Vector128<float> R1, Vector128<float> R2, Vector128<float> R3) lo,
+            ref (Vector128<float> R4, Vector128<float> R5, Vector128<float> R6, Vector128<float> R7) hi)
+        {
+            var e = (lo.R0, lo.R2, hi.R4, hi.R6);
+            var o = (lo.R1, lo.R3, hi.R5, hi.R7);
+
+            Idct4Sse(ref e);
+
+            o.Item4 += o.Item3;
+            o.Item3 += o.Item2;
+            o.Item2 += o.Item1;
+            o.Item1 *= Vector128.Create(DctScales.kSqrt2);
+
+            Idct4Sse(ref o);
+
+            Vector128<float> w0 = Vector128.Create(0.5097955791041592f);
+            Vector128<float> w1 = Vector128.Create(0.6013448869350453f);
+            Vector128<float> w2 = Vector128.Create(0.8999762231364156f);
+            Vector128<float> w3 = Vector128.Create(2.5629154477415055f);
+
+            lo.R0 = Vector128.FusedMultiplyAdd(w0, o.Item1, e.Item1);
+            hi.R7 = Vector128.FusedMultiplyAdd(-w0, o.Item1, e.Item1);
+            lo.R1 = Vector128.FusedMultiplyAdd(w1, o.Item2, e.Item2);
+            hi.R6 = Vector128.FusedMultiplyAdd(-w1, o.Item2, e.Item2);
+            lo.R2 = Vector128.FusedMultiplyAdd(w2, o.Item3, e.Item3);
+            hi.R5 = Vector128.FusedMultiplyAdd(-w2, o.Item3, e.Item3);
+            lo.R3 = Vector128.FusedMultiplyAdd(w3, o.Item4, e.Item4);
+            hi.R4 = Vector128.FusedMultiplyAdd(-w3, o.Item4, e.Item4);
+        }
+
+        // Scalar StoreToBlockAndScale preserved above.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void StoreToBlockAndScaleUnused(int n, int sz, ReadOnlySpan<float> coeff, DctTo to)
         {
             float mul = 1.0f / n;
 

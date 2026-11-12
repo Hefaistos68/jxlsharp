@@ -7,6 +7,8 @@
 
 using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -483,6 +485,47 @@ namespace JxlSharp.Decoder
             WeightsSymmetric5 weights,
             Span<float> rowOut)
         {
+            long x0  = (long)rect.X0;
+            long x1  = (long)rect.X1;
+            long inW = (long)input.xsize;
+            long inH = (long)input.ysize;
+
+            if (inW >= 12 && x1 - x0 >= 8)
+            {
+                long intStart  = Math.Max(x0, 2L);
+                long intEnd    = Math.Min(x1, inW - 2L);
+                long leftLimit = Math.Min(x1, intStart);
+
+                for (long ix = x0; ix < leftLimit; ++ix)
+                {
+                    rowOut[(int)(ix - x0)] = Symmetric5Border(input, ix, iy, mirrorY, weights);
+                }
+
+                if (intEnd > intStart)
+                {
+                    long yM2 = mirrorY ? ImageOps.Mirror(iy - 2, inH) : iy - 2;
+                    long yM1 = mirrorY ? ImageOps.Mirror(iy - 1, inH) : iy - 1;
+                    long y00 = mirrorY ? ImageOps.Mirror(iy, inH) : iy;
+                    long yP1 = mirrorY ? ImageOps.Mirror(iy + 1, inH) : iy + 1;
+                    long yP2 = mirrorY ? ImageOps.Mirror(iy + 2, inH) : iy + 2;
+
+                    Symmetric5InteriorRow(
+                        input,
+                        (yM2, yM1, y00, yP1, yP2),
+                        (int)intStart,
+                        (int)(intEnd - intStart),
+                        weights,
+                        rowOut.Slice((int)(intStart - x0)));
+                }
+
+                for (long ix = Math.Max(x0, intEnd); ix < x1; ++ix)
+                {
+                    rowOut[(int)(ix - x0)] = Symmetric5Border(input, ix, iy, mirrorY, weights);
+                }
+
+                return;
+            }
+
             nuint xend = (nuint)rect.X1;
             nuint rix  = 0;
 
@@ -536,6 +579,106 @@ namespace JxlSharp.Decoder
             float sum2              = w.Wx2 * (inM2 + inP2);
             float sum1              = w.Wx1 * (inM1 + inP1);
             float sum0              = w.Wx0 * in00;
+
+            return sum2 + (sum1 + sum0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static void Symmetric5InteriorRow(
+            ImagePlane<float> input,
+            (long YM2, long YM1, long Y00, long YP1, long YP2) ys,
+            int startX,
+            int count,
+            WeightsSymmetric5 weights,
+            Span<float> dst)
+        {
+            ref float rM2 = ref MemoryMarshal.GetReference(input.ConstRow((nuint)ys.YM2));
+            ref float rM1 = ref MemoryMarshal.GetReference(input.ConstRow((nuint)ys.YM1));
+            ref float r00 = ref MemoryMarshal.GetReference(input.ConstRow((nuint)ys.Y00));
+            ref float rP1 = ref MemoryMarshal.GetReference(input.ConstRow((nuint)ys.YP1));
+            ref float rP2 = ref MemoryMarshal.GetReference(input.ConstRow((nuint)ys.YP2));
+            ref float dRef = ref MemoryMarshal.GetReference(dst);
+            float w0 = weights.C[0];
+            float w1 = weights.r[0];
+            float w2 = weights.R[0];
+            float w4 = weights.d[0];
+            float w5 = weights.L[0];
+            float w8 = weights.D[0];
+            int i    = 0;
+
+            if (Vector256.IsHardwareAccelerated)
+            {
+                Vector256<float> vw0 = Vector256.Create(w0);
+                Vector256<float> vw1 = Vector256.Create(w1);
+                Vector256<float> vw2 = Vector256.Create(w2);
+                Vector256<float> vw4 = Vector256.Create(w4);
+                Vector256<float> vw5 = Vector256.Create(w5);
+                Vector256<float> vw8 = Vector256.Create(w8);
+
+                for (; i + 8 <= count; i += 8)
+                {
+                    nuint sx              = (nuint)(startX + i);
+                    Vector256<float> sum0 = RowWeightedSumVec256(ref r00, sx, vw0, vw1, vw2);
+                    Vector256<float> sum1 = RowWeightedSumVec256(ref rP2, sx, vw2, vw5, vw8);
+
+                    sum0 += RowWeightedSumVec256(ref rM2, sx, vw2, vw5, vw8);
+                    sum0 += RowWeightedSumVec256(ref rM1, sx, vw1, vw4, vw5);
+                    sum1 += RowWeightedSumVec256(ref rP1, sx, vw1, vw4, vw5);
+
+                    (sum0 + sum1).StoreUnsafe(ref dRef, (nuint)i);
+                }
+            }
+
+            for (; i < count; ++i)
+            {
+                int sx     = startX + i;
+                float sum0 = RowWeightedSumScalar(ref r00, sx, w0, w1, w2);
+                float sum1 = RowWeightedSumScalar(ref rP2, sx, w2, w5, w8);
+
+                sum0 += RowWeightedSumScalar(ref rM2, sx, w2, w5, w8);
+                sum0 += RowWeightedSumScalar(ref rM1, sx, w1, w4, w5);
+                sum1 += RowWeightedSumScalar(ref rP1, sx, w1, w4, w5);
+
+                Unsafe.Add(ref dRef, i) = sum0 + sum1;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector256<float> RowWeightedSumVec256(
+            ref float rowRef,
+            nuint sx,
+            Vector256<float> wx0,
+            Vector256<float> wx1,
+            Vector256<float> wx2)
+        {
+            Vector256<float> inM2 = Vector256.LoadUnsafe(ref rowRef, sx - 2u);
+            Vector256<float> inP2 = Vector256.LoadUnsafe(ref rowRef, sx + 2u);
+            Vector256<float> inM1 = Vector256.LoadUnsafe(ref rowRef, sx - 1u);
+            Vector256<float> inP1 = Vector256.LoadUnsafe(ref rowRef, sx + 1u);
+            Vector256<float> in00 = Vector256.LoadUnsafe(ref rowRef, sx);
+            Vector256<float> sum2 = wx2 * (inM2 + inP2);
+            Vector256<float> sum1 = wx1 * (inM1 + inP1);
+            Vector256<float> sum0 = wx0 * in00;
+
+            return sum2 + (sum1 + sum0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float RowWeightedSumScalar(
+            ref float rowRef,
+            int sx,
+            float wx0,
+            float wx1,
+            float wx2)
+        {
+            float inM2 = Unsafe.Add(ref rowRef, sx - 2);
+            float inP2 = Unsafe.Add(ref rowRef, sx + 2);
+            float inM1 = Unsafe.Add(ref rowRef, sx - 1);
+            float inP1 = Unsafe.Add(ref rowRef, sx + 1);
+            float in00 = Unsafe.Add(ref rowRef, sx);
+            float sum2 = wx2 * (inM2 + inP2);
+            float sum1 = wx1 * (inM1 + inP1);
+            float sum0 = wx0 * in00;
 
             return sum2 + (sum1 + sum0);
         }

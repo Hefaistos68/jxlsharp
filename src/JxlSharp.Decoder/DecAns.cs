@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -268,14 +269,14 @@ namespace JxlSharp.Decoder
             { -6, 7 }, { 7, 6 },  { -7, 6 }, { 8, 5 },  { 7, 7 },  { -7, 7 }, { 8, 6 },  { 8, 7 },
         };
 
-        private AliasTable.Entry[] _aliasTables = Array.Empty<AliasTable.Entry>();
-        private HuffmanDecodingData[] _huffmanData = Array.Empty<HuffmanDecodingData>();
-        private bool _usePrefixCode;
+        private readonly AliasTable.Entry[] _aliasTables = Array.Empty<AliasTable.Entry>();
+        private readonly HuffmanDecodingData[] _huffmanData = Array.Empty<HuffmanDecodingData>();
+        private readonly bool _usePrefixCode;
         private uint _state = AnsParams.AnsSignature << 16;
-        private HybridUintConfig[] _configs = Array.Empty<HybridUintConfig>();
-        private uint _logAlphaSize;
-        private uint _logEntrySize;
-        private uint _entrySizeMinus1;
+        private readonly HybridUintConfig[] _configs = Array.Empty<HybridUintConfig>();
+        private readonly uint _logAlphaSize;
+        private readonly uint _logEntrySize;
+        private readonly uint _entrySizeMinus1;
 
         private uint[]? _lz77Window;
         private uint _numDecoded;
@@ -472,7 +473,7 @@ namespace JxlSharp.Decoder
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public nuint ReadSymbolHuffWithoutRefill(nuint histoIdx, BitReader br)
         {
-            return _huffmanData[(int)histoIdx].ReadSymbol(br);
+            return Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_huffmanData), histoIdx).ReadSymbol(br);
         }
 
         /// <summary>
@@ -602,7 +603,10 @@ namespace JxlSharp.Decoder
                 return HandleLz77Match(token, br);
             }
 
-            uint ret = ReadHybridUintConfig(in _configs[(int)ctx], token, br);
+            uint ret = ReadHybridUintConfig(
+                in Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_configs), ctx),
+                token,
+                br);
 
             if (usesLz77 && _lz77Window != null)
             {
@@ -774,6 +778,280 @@ namespace JxlSharp.Decoder
                     Array.Copy(checkpoint.Lz77Window, firstPart, _lz77Window, 0, winEnd);
                 }
             }
+        }
+
+        internal struct EntropyRegState
+        {
+            public ulong BitBuf;
+            public nuint BitsInBuf;
+            public int NextByte;
+            public uint AnsState;
+        }
+
+        internal bool UsePrefixCode
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _usePrefixCode;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void BeginFastRead(BitReader br, out EntropyRegState reg)
+        {
+            br.ExportState(out reg.BitBuf, out reg.BitsInBuf, out reg.NextByte);
+            reg.AnsState = _state;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void EndFastRead(BitReader br, in EntropyRegState reg)
+        {
+            br.ImportState(reg.BitBuf, reg.BitsInBuf, reg.NextByte);
+            _state = reg.AnsState;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal uint ReadAnsNoLz77(nuint ctx, BitReader br, ref EntropyRegState reg)
+        {
+            RefillRegState(br, ref reg);
+
+            uint res                 = reg.AnsState & (uint)AnsParams.AnsTabMask;
+            AliasTable.Symbol symbol = AliasTable.LookupAtOffset(
+                _aliasTables,
+                ctx << (int)_logAlphaSize,
+                res,
+                _logEntrySize,
+                _entrySizeMinus1);
+            uint nextState           = ((uint)symbol.Freq * (reg.AnsState >> (int)AnsParams.AnsLogTabSize)) + (uint)symbol.Offset;
+
+            if (nextState < (1u << 16))
+            {
+                nextState      = (nextState << 16) | (uint)(ushort)reg.BitBuf;
+                reg.BitBuf   >>= 16;
+                reg.BitsInBuf -= 16u;
+            }
+
+            reg.AnsState = nextState;
+
+            return DecodeHybridUintLocal(
+                in Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_configs), ctx),
+                symbol.Value,
+                ref reg);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal uint ReadHuffNoLz77(nuint ctx, BitReader br, ref EntropyRegState reg)
+        {
+            RefillRegState(br, ref reg);
+
+            HuffmanCode[] table      = Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_huffmanData), ctx).Table;
+            ref HuffmanCode tableRef = ref MemoryMarshal.GetArrayDataReference(table);
+            int idx                  = (int)(byte)reg.BitBuf;
+            HuffmanCode code         = Unsafe.Add(ref tableRef, idx);
+            int nBits                = code.Bits;
+
+            if (nBits > HuffmanDecodingData.KHuffmanTableBits)
+            {
+                reg.BitBuf    >>= HuffmanDecodingData.KHuffmanTableBits;
+                reg.BitsInBuf  -= HuffmanDecodingData.KHuffmanTableBits;
+                nBits          -= HuffmanDecodingData.KHuffmanTableBits;
+                idx            += code.Value + (int)(reg.BitBuf & ((1UL << nBits) - 1UL));
+                code            = Unsafe.Add(ref tableRef, idx);
+            }
+
+            reg.BitBuf    >>= code.Bits;
+            reg.BitsInBuf  -= code.Bits;
+
+            return DecodeHybridUintLocal(
+                in Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_configs), ctx),
+                code.Value,
+                ref reg);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void RefillRegState(BitReader br, ref EntropyRegState reg)
+        {
+            if (reg.NextByte <= br.EndMinus8)
+            {
+                ulong loaded = Unsafe.ReadUnaligned<ulong>(
+                    ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(br.DataBuffer), reg.NextByte));
+
+                if (!BitConverter.IsLittleEndian)
+                {
+                    loaded = System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(loaded);
+                }
+
+                reg.BitBuf    |= loaded << (int)reg.BitsInBuf;
+                reg.NextByte  += (int)((63u - reg.BitsInBuf) >> 3);
+                reg.BitsInBuf |= 56u;
+            }
+            else
+            {
+                br.SlowRefill(ref reg.BitBuf, ref reg.BitsInBuf, ref reg.NextByte);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint DecodeHybridUintLocal(
+            in HybridUintConfig config,
+            nuint token,
+            ref EntropyRegState reg)
+        {
+            nuint splitToken = config.SplitToken;
+
+            if (token < splitToken)
+            {
+                return (uint)token;
+            }
+
+            nuint msbInToken    = config.MsbInToken;
+            nuint lsbInToken    = config.LsbInToken;
+            nuint splitExponent = config.SplitExponent;
+            uint nbits          = (uint)splitExponent - (uint)(msbInToken + lsbInToken) +
+                                  ((uint)(token - splitToken) >> (int)(msbInToken + lsbInToken));
+            nbits              &= 31u;
+
+            uint low         = (uint)token & ((1u << (int)lsbInToken) - 1u);
+            token          >>= (int)lsbInToken;
+            nuint bits       = (nuint)(reg.BitBuf & ((1UL << (int)nbits) - 1UL));
+            reg.BitBuf     >>= (int)nbits;
+            reg.BitsInBuf   -= nbits;
+
+            nuint ret = (((((1u << (int)msbInToken) | (token & ((1u << (int)msbInToken) - 1u)))
+                          << (int)nbits) | bits)
+                         << (int)lsbInToken) | low;
+
+            return (uint)ret;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal uint ReadAnsLz77(nuint ctx, BitReader br, ref EntropyRegState reg)
+        {
+            if (_numToCopy > 0)
+            {
+                return ReadFromLz77Window();
+            }
+
+            RefillRegState(br, ref reg);
+
+            uint res                 = reg.AnsState & (uint)AnsParams.AnsTabMask;
+            AliasTable.Symbol symbol = AliasTable.LookupAtOffset(
+                _aliasTables,
+                ctx << (int)_logAlphaSize,
+                res,
+                _logEntrySize,
+                _entrySizeMinus1);
+            uint nextState           = ((uint)symbol.Freq * (reg.AnsState >> (int)AnsParams.AnsLogTabSize)) + (uint)symbol.Offset;
+
+            if (nextState < (1u << 16))
+            {
+                nextState      = (nextState << 16) | (uint)(ushort)reg.BitBuf;
+                reg.BitBuf   >>= 16;
+                reg.BitsInBuf -= 16u;
+            }
+
+            reg.AnsState = nextState;
+
+            if (symbol.Value >= _lz77Threshold)
+            {
+                return HandleLz77MatchReg(symbol.Value, br, ref reg);
+            }
+
+            uint ret = DecodeHybridUintLocal(
+                in Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_configs), ctx),
+                symbol.Value,
+                ref reg);
+
+            StoreToLz77Window(ret);
+
+            return ret;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal uint ReadHuffLz77(nuint ctx, BitReader br, ref EntropyRegState reg)
+        {
+            if (_numToCopy > 0)
+            {
+                return ReadFromLz77Window();
+            }
+
+            RefillRegState(br, ref reg);
+
+            HuffmanCode[] table      = Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_huffmanData), ctx).Table;
+            ref HuffmanCode tableRef = ref MemoryMarshal.GetArrayDataReference(table);
+            int idx                  = (int)(byte)reg.BitBuf;
+            HuffmanCode code         = Unsafe.Add(ref tableRef, idx);
+            int nBits                = code.Bits;
+
+            if (nBits > HuffmanDecodingData.KHuffmanTableBits)
+            {
+                reg.BitBuf    >>= HuffmanDecodingData.KHuffmanTableBits;
+                reg.BitsInBuf  -= HuffmanDecodingData.KHuffmanTableBits;
+                nBits          -= HuffmanDecodingData.KHuffmanTableBits;
+                idx            += code.Value + (int)(reg.BitBuf & ((1UL << nBits) - 1UL));
+                code            = Unsafe.Add(ref tableRef, idx);
+            }
+
+            reg.BitBuf    >>= code.Bits;
+            reg.BitsInBuf  -= code.Bits;
+
+            if (code.Value >= _lz77Threshold)
+            {
+                return HandleLz77MatchReg(code.Value, br, ref reg);
+            }
+
+            uint ret = DecodeHybridUintLocal(
+                in Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_configs), ctx),
+                code.Value,
+                ref reg);
+
+            StoreToLz77Window(ret);
+
+            return ret;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint ReadFromLz77Window()
+        {
+            uint writeIdx = _numDecoded++ & KWindowMask;
+            uint[] window = _lz77Window!;
+
+            if (writeIdx >= (uint)window.Length)
+            {
+                GrowLz77Window(writeIdx);
+                window = _lz77Window!;
+            }
+
+            ref uint winRef = ref MemoryMarshal.GetArrayDataReference(window);
+            uint cached     = Unsafe.Add(ref winRef, _copyPos++ & KWindowMask);
+
+            _numToCopy--;
+            Unsafe.Add(ref winRef, writeIdx) = cached;
+
+            return cached;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void StoreToLz77Window(uint value)
+        {
+            uint writeIdx = _numDecoded++ & KWindowMask;
+            uint[] window = _lz77Window!;
+
+            if (writeIdx >= (uint)window.Length)
+            {
+                GrowLz77Window(writeIdx);
+                window = _lz77Window!;
+            }
+
+            Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(window), writeIdx) = value;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private uint HandleLz77MatchReg(nuint token, BitReader br, ref EntropyRegState reg)
+        {
+            EndFastRead(br, in reg);
+            uint ret = HandleLz77Match(token, br);
+            BeginFastRead(br, out reg);
+
+            return ret;
         }
 
         private uint HandleLz77Match(nuint token, BitReader br)

@@ -105,7 +105,13 @@ namespace JxlSharp.Decoder
         /// <param name="length">Length in bytes.</param>
         public BitReader(byte[] data, int offset, int length)
         {
-            _data          = data ?? Array.Empty<byte>();
+            _data = data ?? Array.Empty<byte>();
+
+            if ((uint)offset > (uint)_data.Length || (uint)length > (uint)(_data.Length - offset))
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
             _startOffset   = offset;
             _length        = length;
             _nextByte      = offset;
@@ -173,7 +179,14 @@ namespace JxlSharp.Decoder
             {
                 // It's safe to load 64 bits; insert valid (possibly nonzero) bits above
                 // _bitsInBuf. The shift requires _bitsInBuf < 64.
-                ulong loaded = ByteOrder.LoadLE64(_data, _nextByte);
+                ulong loaded = Unsafe.ReadUnaligned<ulong>(
+                    ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_data), _nextByte));
+
+                if (!BitConverter.IsLittleEndian)
+                {
+                    loaded = System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(loaded);
+                }
+
                 _buf |= loaded << (int)_bitsInBuf;
 
                 // Advance by bytes fully absorbed into the buffer.
@@ -396,6 +409,46 @@ namespace JxlSharp.Decoder
             {
                 Close();
             }
+        }
+
+        internal byte[] DataBuffer
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _data;
+        }
+
+        internal int EndMinus8
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _endMinus8;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void ExportState(out ulong buf, out nuint bitsInBuf, out int nextByte)
+        {
+            buf       = _buf;
+            bitsInBuf = _bitsInBuf;
+            nextByte  = _nextByte;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void ImportState(ulong buf, nuint bitsInBuf, int nextByte)
+        {
+            _buf       = buf;
+            _bitsInBuf = bitsInBuf;
+            _nextByte  = nextByte;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal void SlowRefill(ref ulong buf, ref nuint bitsInBuf, ref int nextByte)
+        {
+            _buf       = buf;
+            _bitsInBuf = bitsInBuf;
+            _nextByte  = nextByte;
+            BoundsCheckedRefill();
+            buf        = _buf;
+            bitsInBuf  = _bitsInBuf;
+            nextByte   = _nextByte;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

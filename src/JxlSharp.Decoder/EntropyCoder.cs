@@ -68,7 +68,14 @@ namespace JxlSharp.Decoder
             Debug.Assert(k > 0 && k < 64);
             Debug.Assert(nonzerosLeft > 0 && nonzerosLeft < 64);
 
-            return (nuint)(((CoeffNumNonzeroContext[(int)nonzerosLeft] + CoeffFreqContext[(int)k]) * 2) + (int)prev);
+            ushort nzCtx   = Unsafe.Add(
+                ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(CoeffNumNonzeroContext),
+                (int)nonzerosLeft);
+            ushort freqCtx = Unsafe.Add(
+                ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(CoeffFreqContext),
+                (int)k);
+
+            return (nuint)(((nzCtx + freqCtx) * 2) + (int)prev);
         }
     }
 
