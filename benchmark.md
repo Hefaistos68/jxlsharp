@@ -273,61 +273,135 @@ By profiling standalone `cjxl` and `djxl` directly (isolating codec CPU work fro
 
 ---
 
+## Suite 7: AVX2 Vectorization, Fast-Lossless Integration & Allocation Elimination (Step 6 — Release JIT & Native AOT)
+
+### 1. Integrated Optimizations (PR `#2` + `main` Hybrid Merge)
+
+- **Fast-Lossless Routing (`EncodeFastLosslessFrame`)**: Routes 8/16-bit lossless `m:d0:1` (`SpeedTier.kLightning`) frames directly from caller pixel buffers through `EncFastLossless` using the `JxlThreadPool`, lifting `jxl:m:d0:1` Native AOT encode throughput from **`39.322` -> `326.681 MP/s`** (**$8.31\times$** sequential, **`125.3%` of C++**) and parallel batch AOT to **`797.269 MP/s`** (**$8.10\times$ C++**).
+- **AVX2 Decoder & Encoder Hot Loops**:
+  - `DecGroup.DequantizeCoefficients` & `FillLowestFrequenciesFromDc`: Vectorized `Vector256<float>` dequantization + color-correlation FMA combined with `ZeroDensityContext8x8` and single-pass `LoadSinglePassBlock`.
+  - `Convolve.SlowSeparable5`: AVX2 `Vector256<float>` separable 5×5 interior convolution (retained alongside `Symmetric5InteriorRow` from `main`).
+  - `PassesStateAndOutputStages`: Fused AVX2 planar-to-interleaved linear-to-sRGB 8-bit output (`StoreLinearSrgb8Row`), `Avx2` dispatch in `StoreFloatRowSimd`, and direct destination writes (`FinishOutput`) bypassing intermediate copies when aligned and un-transposed.
+  - `EncXyb.ConvertSrgbSpanToLinearSimd`: Added 8-lane `Vector256<float>` `TfSrgb.DisplayFromEncoded` loop ahead of the 4-lane tail, and `GaussBlur` `Avx2`/`Vec4` SIMD vertical/horizontal recurrences.
+- **Branchless Entropy + Pooled Memory**: Preserved `main`'s branchless `BitReader.Refill` and `ANSSymbolReader.ReadSymbolANSWithoutRefill` (`LookupAtOffset`) to avoid branch-misprediction stalls on `m:d0:2` decode, alongside `ThreadParallelRunner.RunnerWithTaskLimit`, `ArrayPool<byte>.Shared` encode output buffering (`ReadCompressedOutput`), zero-copy `DecodeImageJXLFromMemory`, and `PrimaryImageHandling.TakePixels` / `Skip` in `JxlSharpCodec`.
+
+### 2. 10-Codec Sequential `benchmark_xl` (`--num_threads=0 --inner_threads=16 --encode_reps=3 --decode_reps=10`)
+
+| Codec | C++ Encode | Step 5 JIT Encode | Step 5 AOT Encode | **Step 6 JIT Encode** | **Step 6 AOT Encode** | Best C# / C++ (Encode) | C++ Decode | Step 5 JIT Decode | Step 5 AOT Decode | **Step 6 JIT Decode** | **Step 6 AOT Decode** | Best C# / C++ (Decode) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **`jxl:d1:1`** | 53.49 | 34.792 | 47.642 | 28.341 | **61.472** | **114.9% (AOT, C# faster)** | 142.26 | 102.571 | 111.420 | 113.208 | **208.121** | **146.3% (AOT, C# faster)** |
+| **`jxl:d1:2`** | 54.64 | 41.401 | 49.210 | 35.183 | **61.537** | **112.6% (AOT, C# faster)** | 140.48 | 150.828 | 140.988 | 209.306 | **222.599** | **158.5% AOT / 149.0% JIT** |
+| **`jxl:d1:3`** | 45.35 | 38.900 | 33.668 | **39.203** | 38.408 | **86.4% (JIT)** | 124.18 | 148.245 | 131.186 | 186.263 | **206.940** | **166.6% AOT / 150.0% JIT** |
+| **`jxl:d1:4`** | 43.68 | 35.168 | 33.102 | 38.629 | **40.168** | **92.0% (AOT)** | 144.88 | 144.900 | 128.582 | 199.514 | **207.861** | **143.5% AOT / 137.7% JIT** |
+| **`jxl:d1:5`** | 18.64 | 31.800 | 26.793 | **32.175** | 28.782 | **172.6% JIT / 154.4% AOT** | 153.56 | 153.330 | 123.572 | 182.716 | **207.172** | **134.9% AOT / 119.0% JIT** |
+| **`jxl:d1:6`** | 12.21 | 29.421 | 21.422 | **30.390** | 28.704 | **248.9% JIT / 235.1% AOT** | 150.67 | 155.020 | 116.693 | **202.425** | 201.958 | **134.3% JIT / 134.0% AOT** |
+| **`jxl:d1:7`** | 11.01 | 26.828 | 20.908 | **28.989** | 25.561 | **263.3% JIT / 232.2% AOT** | 145.46 | 138.073 | 109.640 | **199.740** | 185.237 | **137.3% JIT / 127.3% AOT** |
+| **`jxl:m:d0:1`** | 260.75 | 49.596 | 39.322 | 70.795 | **326.681** | **125.3% (AOT, C# faster)** | 187.04 | 120.939 | 101.299 | **133.944** | 116.530 | **71.6% (JIT)** |
+| **`jxl:m:d0:2`** | 58.70 | 41.687 | 36.503 | 39.865 | **40.358** | **68.8% (AOT)** | 176.28 | 255.696 | 175.581 | **210.405** | 207.393 | **119.4% JIT / 117.7% AOT** |
+| **`jxl:m:d0:3`** | 42.05 | 31.932 | 29.929 | **34.699** | 29.780 | **82.5% (JIT)** | 86.44 | 71.887 | 53.948 | **64.591** | 62.932 | **74.7% (JIT)** |
+| **Aggregate (10 Codecs)** | **35.12** | **35.595** | **32.579** | **36.495** | **46.610** | **132.7% AOT / 103.9% JIT** | **141.78** | **137.550** | **114.927** | **161.191** | **172.619** | **121.8% AOT / 113.7% JIT** |
+
+### 3. 13-Codec Parallel Batch `benchmark_xl` (`--num_threads=16 --inner_threads=16 --encode_reps=3 --decode_reps=10`)
+
+| Codec | C++ Encode (MP/s) | Step 5 JIT Encode (MP/s) | Step 5 AOT Encode (MP/s) | **Step 6 JIT Encode (MP/s)** | **Step 6 AOT Encode (MP/s)** | Best C# / C++ (Encode) | C++ Decode (MP/s) | Step 5 JIT Decode (MP/s) | Step 5 AOT Decode (MP/s) | **Step 6 JIT Decode (MP/s)** | **Step 6 AOT Decode (MP/s)** | Best C# / C++ (Decode) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **`jxl:d1:1`** | 89.20 | 138.896 | 102.201 | **98.048** | 76.738 | **109.9% (Step 6 JIT)** | 232.98 | 255.411 | 257.609 | 373.831 | **433.673** | **186.1% AOT / 160.5% JIT** |
+| **`jxl:d1:2`** | 82.97 | 125.128 | 93.850 | **95.100** | 93.402 | **114.6% JIT / 112.6% AOT** | 237.45 | 235.292 | 250.459 | **416.162** | 401.477 | **175.3% JIT / 169.1% AOT** |
+| **`jxl:d1:3`** | 70.11 | 41.999 | 62.530 | 47.166 | **60.516** | **86.3% (AOT)** | 253.78 | 366.542 | 279.528 | 377.205 | **424.093** | **167.1% AOT / 148.6% JIT** |
+| **`jxl:d1:4`** | 53.39 | 40.728 | 58.067 | 44.947 | **60.518** | **113.4% (AOT)** | 247.37 | 436.374 | 298.977 | 347.417 | **416.020** | **168.2% AOT / 140.4% JIT** |
+| **`jxl:d1:5`** | 26.86 | 41.704 | 48.137 | 48.581 | **60.179** | **224.0% AOT / 180.9% JIT** | 244.41 | 447.113 | 356.663 | 308.464 | **437.195** | **178.9% AOT / 126.2% JIT** |
+| **`jxl:d1:6`** | 15.86 | 38.342 | 49.402 | 44.822 | **55.006** | **346.8% ($3.47\times$ C++)** | 247.53 | 432.604 | 367.549 | 305.813 | **467.111** | **188.7% AOT / 123.5% JIT** |
+| **`jxl:d1:7`** | 14.12 | 38.707 | 46.173 | 48.036 | **63.318** | **448.4% ($4.48\times$ C++)** | 249.43 | 437.569 | 323.526 | 321.252 | **420.700** | **168.7% AOT / 128.8% JIT** |
+| **`jxl:d4:7`** | 15.49 | 68.296 | 59.575 | 66.580 | **71.990** | **464.8% ($4.65\times$ C++)** | 257.10 | 212.942 | 245.431 | 331.111 | **387.222** | **150.6% AOT / 128.8% JIT** |
+| **`jxl:m:d0:1`** | 98.41 | 180.608 | 138.661 | 301.677 | **797.269** | **810.1% ($8.10\times$ C++)** | 222.84 | 312.707 | 337.564 | **569.759** | 432.240 | **255.7% JIT / 194.0% AOT** |
+| **`jxl:m:d0:2`** | 76.50 | 128.322 | 83.560 | **104.283** | 89.989 | **136.3% JIT / 117.6% AOT** | 236.44 | 375.712 | 368.613 | **611.669** | 522.533 | **258.7% JIT / 221.0% AOT** |
+| **`jxl:m:d0:3`** | 42.19 | 115.966 | 73.517 | **93.353** | 84.646 | **221.3% JIT / 200.6% AOT** | 95.34 | 188.280 | 219.313 | **357.659** | 279.807 | **375.1% JIT / 293.5% AOT** |
+| **`jxl:m:d0:5`** | 13.70 | 17.340 | 16.411 | 15.389 | **17.958** | **131.1% AOT / 112.3% JIT** | 270.09 | 316.930 | 292.963 | **439.214** | 411.268 | **162.6% JIT / 152.3% AOT** |
+| **`jxl:m:d0:7`** | 5.29 | 9.338 | 8.409 | **10.451** | 9.236 | **197.6% JIT / 174.6% AOT** | 238.13 | 359.459 | 334.875 | **393.407** | 328.044 | **165.2% JIT / 137.8% AOT** |
+| **Aggregate (13 Codecs)** | **32.78** | **56.114** | **53.115** | **56.866** | **65.381** | **199.5% AOT / 173.5% JIT** | **209.26** | **324.170** | **298.636** | **387.260** | **408.116** | **195.0% AOT / 185.1% JIT** |
+
+### 4. Single-Threaded `benchmark_xl` (`1T`) & Standalone CLI Workloads (`flower.png`, `--disable_output`)
+
+| Workload / Codec | Step 6 JIT | Step 6 Native AOT | Notes / Comparison |
+| :--- | ---: | ---: | :--- |
+| **`benchmark_xl` 6-Codec 1T Encode Aggregate** | **14.147 MP/s** | **15.296 MP/s** | `d1:1` AOT `18.729`, `d1:3` JIT `16.009`, `d1:7` JIT `7.252`, `m:d0:1` AOT `57.660`, `m:d0:2` AOT `15.524`, `m:d0:3` AOT `7.245` (`0` bugs) |
+| **`benchmark_xl` 6-Codec 1T Decode Aggregate** | **30.734 MP/s** | **31.132 MP/s** | `d1:1` AOT `59.751`, `d1:3` AOT `53.974`, `d1:7` JIT `53.840`, `m:d0:1` JIT `27.181`, `m:d0:2` JIT `26.810`, `m:d0:3` AOT `8.640` (`0` bugs) |
+| **`djxl` VarDCT (`d1:e7`) 16T (30 reps)** | **132.630 MP/s** (`195.847` peak, `17.51 ms`) | **181.626 MP/s** (`208.469` peak, `16.45 ms`) | **`140.0%` geomean / `131.5%` peak vs. C++** (`+26.2%` over Step 5 AOT) |
+| **`djxl` VarDCT (`d1:e7`) 1T (10 reps)** | **46.044 MP/s** (`51.646` peak, `66.40 ms`) | **53.138 MP/s** (`53.867` peak, `63.87 ms`) | **`161.4%` geomean / `160.4%` peak vs. C++** (`+54.7%` over Step 5 AOT) |
+| **`djxl` Modular (`m:d0:e2`) 16T (30 reps)** | **187.019 MP/s** (`231.025` peak, `19.30 ms`) | **195.456 MP/s** (`262.116` peak, `18.17 ms`) | **`+19.3%` over Step 5 AOT (`163.90 MP/s`)** |
+| **`cjxl -d 1 -e 7` 16T (Median of 3 CLI runs)** | **4.758 MP/s** (`0.7207 s` wall, `6.364 MP/s` inner) | **14.129 MP/s** (`0.2427 s` wall, `26.451 MP/s` inner) | **`377.8%` ($3.78\times$ C++ `libjxl`); best run `14.187 MP/s` / `0.2417 s`** |
+| **`cjxl -m 1 -d 0 -e 1` 16T (Median of 3 CLI runs)** | **9.333 MP/s** (`0.3674 s` wall, `27.911 MP/s` inner) | **28.664 MP/s** (`0.1196 s` wall, `318.044 MP/s` inner) | **Best AOT run `29.866 MP/s` (`0.1148 s`), peak inner `323.163 MP/s`** |
+
+### 5. Multi-Image Concurrency & Managed Allocations (`JxlSharp.ConcurrencyBench`, `1024 x 1024`, `5` rounds, Release JIT)
+
+| Workload | Concurrency x Threads | Throughput (MP/s) | Throughput (img/s) | Median Latency (ms) | P95 Latency (ms) | Allocated / Image (MiB) | Sampled Peak WS (MiB) | Verified |
+| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
+| **`encode lossy` (`d1:e3`)** | `1 x 16T` | **10.137** | 9.67 | 81.60 | 147.22 | 91.84 MiB | 287.10 MiB | `true` |
+| **`encode lossy` (`d1:e3`)** | `8 x 2T` | **58.754** | 56.03 | 132.02 | 146.03 | 87.43 MiB | 1,173.49 MiB | `true` |
+| **`encode lossless` (`d0:e3`)** | `1 x 16T` | **19.311** | 18.42 | 49.45 | 65.93 | 124.31 MiB | 479.15 MiB | `true` |
+| **`encode lossless` (`d0:e3`)** | `8 x 2T` | **57.570** | 54.90 | 130.11 | 170.67 | 95.41 MiB | 1,363.26 MiB | `true` |
+| **`decode lossy`** | `1 x 16T` | **74.543** | 71.09 | 14.48 | 14.72 | 12.17 MiB | 151.09 MiB | `true` |
+| **`decode lossy`** | `8 x 2T` | **222.955** | 212.63 | 32.08 | 39.04 | 10.81 MiB | 553.29 MiB | `true` |
+| **`decode lossless`** | `1 x 16T` | **66.109** | 63.05 | 15.18 | 18.21 | 36.31 MiB | 265.24 MiB | `true` |
+| **`decode lossless`** | `8 x 2T` | **70.449** | 67.19 | 109.83 | 122.34 | 34.97 MiB | 615.24 MiB | `true` |
+
+---
+
 ## Latest Head-to-Head Comparative Benchmark (`C++ libjxl` vs. `C# JxlSharp` JIT & Native AOT)
 
 ### Comparative Table by Test Type (`flower.png`, $2268 \times 1512$)
 
-| Test Type | Mode / Preset | Threads | C++ (`libjxl` AVX2) (MP/s) | C# Step 0 JIT (MP/s) | C# Step 3 AOT (MP/s) | **C# Step 5 JIT (MP/s)** | **C# Step 5 AOT (MP/s)** | Best C# / C++ Ratio |
-| :--- | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **VarDCT Lossy Encode (`d1:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 53.49 | 11.51 | 36.91 | 34.79 | **47.64** | **89.1% (AOT)** |
-| **VarDCT Lossy Encode (`d1:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 54.64 | 32.28 | 35.90 | 41.40 | **49.21** | **90.1% (AOT)** |
-| **VarDCT Lossy Encode (`d1:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 45.35 | 26.49 | 25.15 | **38.90** | 33.67 | **85.8% (JIT)** |
-| **VarDCT Lossy Encode (`d1:e4` Cheetah)** | Sequential Task (`--num_threads=0`) | 16T | 43.68 | 28.34 | 27.47 | **35.17** | 33.10 | **80.5% (JIT)** |
-| **VarDCT Lossy Encode (`d1:e5` Hare)** | Sequential Task (`--num_threads=0`) | 16T | 18.64 | 20.69 | 20.86 | **31.80** | **26.79** | **170.6% JIT / 143.7% AOT (C# faster)** |
-| **VarDCT Lossy Encode (`d1:e6` Wombat)** | Sequential Task (`--num_threads=0`) | 16T | 12.21 | 13.65 | 13.64 | **29.42** | **21.42** | **241.0% JIT / 175.4% AOT (C# faster)** |
-| **VarDCT Lossy Encode (`d1:e7` Squirrel)** | Sequential Task (`--num_threads=0`) | 16T | 11.01 | 13.47 | 13.13 | **26.83** | **20.91** | **243.7% JIT / 189.9% AOT (C# faster)** |
-| **Modular Lossless Encode (`m:d0:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 260.75 | 41.01 | **51.16** | 49.60 | 39.32 | 19.6% |
-| **Modular Lossless Encode (`m:d0:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 58.70 | 35.41 | 40.86 | **41.69** | 36.50 | **71.0% (JIT)** |
-| **Modular Lossless Encode (`m:d0:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 42.05 | 27.15 | 31.36 | **31.93** | 29.93 | **75.9% (JIT)** |
-| **VarDCT Lossy Decode (`d1:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 142.26 | 72.80 | **124.09** | 102.57 | 111.42 | **78.3% (Step 5 AOT)** |
-| **VarDCT Lossy Decode (`d1:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 140.48 | 119.44 | 123.63 | **150.83** | **140.99** | **107.4% JIT / 100.4% AOT (C# faster)** |
-| **VarDCT Lossy Decode (`d1:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 124.18 | 115.12 | 118.56 | **148.25** | **131.19** | **119.4% JIT / 105.6% AOT (C# faster)** |
-| **VarDCT Lossy Decode (`d1:e4` Cheetah)** | Sequential Task (`--num_threads=0`) | 16T | 144.88 | 126.34 | 122.45 | **144.90** | 128.58 | **100.0% (JIT)** |
-| **VarDCT Lossy Decode (`d1:e5` Hare)** | Sequential Task (`--num_threads=0`) | 16T | 153.56 | 104.05 | 125.45 | **153.33** | 123.57 | **99.9% (JIT)** |
-| **VarDCT Lossy Decode (`d1:e6` Wombat)** | Sequential Task (`--num_threads=0`) | 16T | 150.67 | 115.23 | 115.79 | **155.02** | 116.69 | **102.9% (JIT, C# faster)** |
-| **VarDCT Lossy Decode (`d1:e7` Squirrel)** | Sequential Task (`--num_threads=0`) | 16T | 145.46 | 121.51 | 113.27 | **138.07** | 109.64 | **94.9% (JIT)** |
-| **Modular Lossless Decode (`m:d0:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 187.04 | 102.74 | **127.93** | 120.94 | 101.30 | **64.7% (Step 5 JIT)** |
-| **Modular Lossless Decode (`m:d0:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 176.28 | 117.28 | 121.72 | **255.70** | **175.58** | **145.1% JIT / 99.6% AOT (C# faster)** |
-| **Modular Lossless Decode (`m:d0:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 86.44 | 53.62 | 58.87 | **71.89** | 53.95 | **83.2% (JIT)** |
-| **10-Codec Sequential Encode Aggregate** | Sequential Tasks (`--inner_threads=16`) | 16T | 35.12 | 23.02 | 27.23 | **35.60** | **32.58** | **101.4% JIT / 92.8% AOT (C# faster)** |
-| **10-Codec Sequential Decode Aggregate** | Sequential Tasks (`--inner_threads=16`) | 16T | 141.78 | 101.76 | 112.88 | **137.55** | **114.93** | **97.0% JIT / 81.1% AOT** |
-| **Multi-Task Batch Encode Aggregate (13 Codecs)** | Parallel Tasks (`--inner_threads=16`) | 16T | 32.78 | 20.73 | — | **56.11** | **53.12** | **171.2% JIT / 162.0% AOT (C# faster)** |
-| **Multi-Task Batch Decode Aggregate (13 Codecs)** | Parallel Tasks (`--inner_threads=16`) | 16T | 209.26 | 187.14 | — | **324.17** | **298.64** | **154.9% JIT / 142.7% AOT (C# faster)** |
-| **Single-Threaded Encode (`d1:e7` Squirrel)** | Single Thread (`--inner_threads=1`) | 1T | 2.54 | 1.64 | — | — | **6.53** | **257.2% ($2.57\times$ C++)** |
-| **Single-Threaded Decode (`d1:e7` Squirrel)** | Single Thread (`--inner_threads=1`) | 1T | 34.21 | 23.97 | — | — | **34.42** | **100.6% (C# faster)** |
-| **Single-Threaded Decode (`m:d0:e1` Lightning)** | Single Thread (`--inner_threads=1`) | 1T | 30.21 | 20.89 | — | — | **23.12** | **76.5%** |
-| **Standalone `djxl` CLI (Decompress-Only, 30 reps)** | CLI Geomean / Peak | 16T | 129.69 (158.58 peak) | 80.65 (105.13 peak) | 102.39 (109.11 peak) | **103.92 (155.59 peak)** | **143.93 (159.68 peak)** | **111.0% geomean / 100.7% peak (C# faster)** |
-| **Standalone `djxl` CLI (Decompress-Only, 10 reps)** | CLI Geomean / Peak | 1T | 32.93 (33.59 peak) | 17.61 (18.57 peak) | 18.08 (18.98 peak) | **33.14 (34.65 peak)** | **34.34 (35.00 peak)** | **104.3% geomean / 104.2% peak (C# faster)** |
-| **Standalone `cjxl -d 1 -e 7` CLI (End-to-End)** | CLI Wall Throughput | 16T | 3.74 (0.916 s) | 2.34 (1.467 s) | — | **4.90 (0.699 s)** | **11.20 (0.306 s)** | **299.5% ($3.00\times$ faster than C++)** |
+| Test Type | Mode / Preset | Threads | C++ (`libjxl` AVX2) (MP/s) | C# Step 0 JIT (MP/s) | C# Step 5 JIT (MP/s) | C# Step 5 AOT (MP/s) | **C# Step 6 JIT (MP/s)** | **C# Step 6 AOT (MP/s)** | Best C# / C++ Ratio |
+| :--- | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **VarDCT Lossy Encode (`d1:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 53.49 | 11.51 | 34.79 | 47.64 | 28.34 | **61.47** | **114.9% (Step 6 AOT, C# faster)** |
+| **VarDCT Lossy Encode (`d1:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 54.64 | 32.28 | 41.40 | 49.21 | 35.18 | **61.54** | **112.6% (Step 6 AOT, C# faster)** |
+| **VarDCT Lossy Encode (`d1:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 45.35 | 26.49 | 38.90 | 33.67 | **39.20** | 38.41 | **86.4% (Step 6 JIT)** |
+| **VarDCT Lossy Encode (`d1:e4` Cheetah)** | Sequential Task (`--num_threads=0`) | 16T | 43.68 | 28.34 | 35.17 | 33.10 | 38.63 | **40.17** | **92.0% (Step 6 AOT)** |
+| **VarDCT Lossy Encode (`d1:e5` Hare)** | Sequential Task (`--num_threads=0`) | 16T | 18.64 | 20.69 | 31.80 | 26.79 | **32.18** | 28.78 | **172.6% JIT / 154.4% AOT (C# faster)** |
+| **VarDCT Lossy Encode (`d1:e6` Wombat)** | Sequential Task (`--num_threads=0`) | 16T | 12.21 | 13.65 | 29.42 | 21.42 | **30.39** | 28.70 | **248.9% JIT / 235.1% AOT (C# faster)** |
+| **VarDCT Lossy Encode (`d1:e7` Squirrel)** | Sequential Task (`--num_threads=0`) | 16T | 11.01 | 13.47 | 26.83 | 20.91 | **28.99** | 25.56 | **263.3% JIT / 232.2% AOT (C# faster)** |
+| **Modular Lossless Encode (`m:d0:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 260.75 | 41.01 | 49.60 | 39.32 | 70.80 | **326.68** | **125.3% (Step 6 AOT, C# faster)** |
+| **Modular Lossless Encode (`m:d0:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 58.70 | 35.41 | 41.69 | 36.50 | 39.87 | **40.36** | **68.8% (Step 6 AOT)** |
+| **Modular Lossless Encode (`m:d0:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 42.05 | 27.15 | 31.93 | 29.93 | **34.70** | 29.78 | **82.5% (Step 6 JIT)** |
+| **VarDCT Lossy Decode (`d1:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 142.26 | 72.80 | 102.57 | 111.42 | 113.21 | **208.12** | **146.3% (Step 6 AOT, C# faster)** |
+| **VarDCT Lossy Decode (`d1:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 140.48 | 119.44 | 150.83 | 140.99 | 209.31 | **222.60** | **158.5% AOT / 149.0% JIT (C# faster)** |
+| **VarDCT Lossy Decode (`d1:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 124.18 | 115.12 | 148.25 | 131.19 | 186.26 | **206.94** | **166.6% AOT / 150.0% JIT (C# faster)** |
+| **VarDCT Lossy Decode (`d1:e4` Cheetah)** | Sequential Task (`--num_threads=0`) | 16T | 144.88 | 126.34 | 144.90 | 128.58 | 199.51 | **207.86** | **143.5% AOT / 137.7% JIT (C# faster)** |
+| **VarDCT Lossy Decode (`d1:e5` Hare)** | Sequential Task (`--num_threads=0`) | 16T | 153.56 | 104.05 | 153.33 | 123.57 | 182.72 | **207.17** | **134.9% AOT / 119.0% JIT (C# faster)** |
+| **VarDCT Lossy Decode (`d1:e6` Wombat)** | Sequential Task (`--num_threads=0`) | 16T | 150.67 | 115.23 | 155.02 | 116.69 | **202.43** | 201.96 | **134.3% JIT / 134.0% AOT (C# faster)** |
+| **VarDCT Lossy Decode (`d1:e7` Squirrel)** | Sequential Task (`--num_threads=0`) | 16T | 145.46 | 121.51 | 138.07 | 109.64 | **199.74** | 185.24 | **137.3% JIT / 127.3% AOT (C# faster)** |
+| **Modular Lossless Decode (`m:d0:e1` Lightning)** | Sequential Task (`--num_threads=0`) | 16T | 187.04 | 102.74 | 120.94 | 101.30 | **133.94** | 116.53 | **71.6% (Step 6 JIT)** |
+| **Modular Lossless Decode (`m:d0:e2` Thunder)** | Sequential Task (`--num_threads=0`) | 16T | 176.28 | 117.28 | 255.70 | 175.58 | **210.41** | 207.39 | **119.4% JIT / 117.7% AOT (C# faster)** |
+| **Modular Lossless Decode (`m:d0:e3` Falcon)** | Sequential Task (`--num_threads=0`) | 16T | 86.44 | 53.62 | 71.89 | 53.95 | **64.59** | 62.93 | **74.7% (Step 6 JIT)** |
+| **10-Codec Sequential Encode Aggregate** | Sequential Tasks (`--inner_threads=16`) | 16T | 35.12 | 23.02 | 35.60 | 32.58 | 36.50 | **46.61** | **132.7% AOT / 103.9% JIT (C# faster)** |
+| **10-Codec Sequential Decode Aggregate** | Sequential Tasks (`--inner_threads=16`) | 16T | 141.78 | 101.76 | 137.55 | 114.93 | 161.19 | **172.62** | **121.8% AOT / 113.7% JIT (C# faster)** |
+| **Multi-Task Batch Encode Aggregate (13 Codecs)** | Parallel Tasks (`--inner_threads=16`) | 16T | 32.78 | 20.73 | 56.11 | 53.12 | 56.87 | **65.38** | **199.5% AOT / 173.5% JIT (C# faster)** |
+| **Multi-Task Batch Decode Aggregate (13 Codecs)** | Parallel Tasks (`--inner_threads=16`) | 16T | 209.26 | 187.14 | 324.17 | 298.64 | 387.26 | **408.12** | **195.0% AOT / 185.1% JIT (C# faster)** |
+| **Single-Threaded Encode (`d1:e7` Squirrel)** | Single Thread (`--inner_threads=1`) | 1T | 2.54 | 1.64 | — | 6.53 | **7.25** | 6.83 | **285.5% JIT / 268.9% AOT ($2.86\times$ C++)** |
+| **Single-Threaded Decode (`d1:e7` Squirrel)** | Single Thread (`--inner_threads=1`) | 1T | 34.21 | 23.97 | — | 34.42 | **53.84** | 50.89 | **157.4% JIT / 148.8% AOT (C# faster)** |
+| **Single-Threaded Decode (`m:d0:e1` Lightning)** | Single Thread (`--inner_threads=1`) | 1T | 30.21 | 20.89 | — | 23.12 | **27.18** | 25.60 | **90.0% (Step 6 JIT)** |
+| **Standalone `djxl` CLI (Decompress-Only, 30 reps)** | CLI Geomean / Peak | 16T | 129.69 (158.58 peak) | 80.65 (105.13 peak) | 103.92 (155.59 peak) | 143.93 (159.68 peak) | 132.63 (195.85 peak) | **181.63 (208.47 peak)** | **140.0% geomean / 131.5% peak (C# faster)** |
+| **Standalone `djxl` CLI (Decompress-Only, 10 reps)** | CLI Geomean / Peak | 1T | 32.93 (33.59 peak) | 17.61 (18.57 peak) | 33.14 (34.65 peak) | 34.34 (35.00 peak) | 46.04 (51.65 peak) | **53.14 (53.87 peak)** | **161.4% geomean / 160.4% peak (C# faster)** |
+| **Standalone `cjxl -d 1 -e 7` CLI (End-to-End)** | CLI Wall Throughput | 16T | 3.74 (0.916 s) | 2.34 (1.467 s) | 4.90 (0.699 s) | 11.20 (0.306 s) | 4.76 (0.721 s) | **14.13 (0.243 s)** | **377.8% ($3.78\times$ faster than C++)** |
 
-### Comparative Performance Graphs (`C++ libjxl` vs. `C# Step 5 JIT` vs. `C# Step 5 Native AOT` in `MP/s`)
+### Comparative Performance Graphs (`C++ libjxl` vs. `C# Step 6 JIT` vs. `C# Step 6 Native AOT` in `MP/s`)
 
 ```mermaid
 xychart-beta
-    title "16-Thread Encoding Throughput: C++ (Bar 1) vs. C# Step 5 JIT (Bar 2) vs. C# Step 5 AOT (Bar 3) [MP/s]"
+    title "16-Thread Encoding Throughput: C++ (Bar 1) vs. C# Step 6 JIT (Bar 2) vs. C# Step 6 AOT (Bar 3) [MP/s]"
     x-axis ["d1:e1", "d1:e2", "d1:e3", "d1:e4", "d1:e5", "d1:e6", "d1:e7", "m:d0:e2", "m:d0:e3", "Seq Agg", "Batch Agg"]
-    y-axis "Throughput (MP/s)" 0 --> 60
+    y-axis "Throughput (MP/s)" 0 --> 70
     bar [53.49, 54.64, 45.35, 43.68, 18.64, 12.21, 11.01, 58.70, 42.05, 35.12, 32.78]
-    bar [34.79, 41.40, 38.90, 35.17, 31.80, 29.42, 26.83, 41.69, 31.93, 35.60, 56.11]
-    bar [47.64, 49.21, 33.67, 33.10, 26.79, 21.42, 20.91, 36.50, 29.93, 32.58, 53.12]
+    bar [28.34, 35.18, 39.20, 38.63, 32.18, 30.39, 28.99, 39.87, 34.70, 36.50, 56.87]
+    bar [61.47, 61.54, 38.41, 40.17, 28.78, 28.70, 25.56, 40.36, 29.78, 46.61, 65.38]
 ```
 
 ```mermaid
 xychart-beta
-    title "Decoding & CLI Throughput: C++ (Bar 1) vs. C# Step 5 JIT (Bar 2) vs. C# Step 5 AOT (Bar 3) [MP/s]"
+    title "Decoding & CLI Throughput: C++ (Bar 1) vs. C# Step 6 JIT (Bar 2) vs. C# Step 6 AOT (Bar 3) [MP/s]"
     x-axis ["d1:e1", "d1:e2", "d1:e3", "d1:e4", "d1:e5", "d1:e6", "d1:e7", "m:d0:e2", "Seq Agg", "Batch Agg", "djxl 16T", "djxl 1T"]
-    y-axis "Throughput (MP/s)" 0 --> 340
+    y-axis "Throughput (MP/s)" 0 --> 440
     bar [142.26, 140.48, 124.18, 144.88, 153.56, 150.67, 145.46, 176.28, 141.78, 209.26, 129.69, 32.93]
-    bar [102.57, 150.83, 148.25, 144.90, 153.33, 155.02, 138.07, 255.70, 137.55, 324.17, 103.92, 33.14]
-    bar [111.42, 140.99, 131.19, 128.58, 123.57, 116.69, 109.64, 175.58, 114.93, 298.64, 143.93, 34.34]
+    bar [113.21, 209.31, 186.26, 199.51, 182.72, 202.43, 199.74, 210.41, 161.19, 387.26, 132.63, 46.04]
+    bar [208.12, 222.60, 206.94, 207.86, 207.17, 201.96, 185.24, 207.39, 172.62, 408.12, 181.63, 53.14]
 ```
