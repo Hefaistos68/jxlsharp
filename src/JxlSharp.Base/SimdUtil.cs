@@ -147,17 +147,7 @@ namespace JxlSharp.Base
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Transpose8x8Block(ReadOnlySpan<int> from, Span<int> to, nuint fromStride)
         {
-            int stride = (int)fromStride;
-
-            for (int n = 0; n < 8; ++n)
-            {
-                int rowOffset = n * stride;
-
-                for (int m = 0; m < 8; ++m)
-                {
-                    to[(m * 8) + n] = from[rowOffset + m];
-                }
-            }
+            Transpose.GenericTransposeBlock<int>(from, (int)fromStride, to, 8, 8, 8);
         }
     }
 }

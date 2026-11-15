@@ -7,6 +7,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 
 namespace JxlSharp.Decoder
@@ -245,6 +247,27 @@ namespace JxlSharp.Decoder
             294337,   289262,  284359,  279620,  275036,  270600,  266305,  262144,
         };
 
+        private const int SmallErrorCount = 1024;
+        // Header weights occupy four bits. Share this 64 KiB table across all channels/frames.
+        private static readonly uint[] SmallErrorWeights = BuildSmallErrorWeights();
+
+        private static uint[] BuildSmallErrorWeights()
+        {
+            var table = new uint[16 * SmallErrorCount];
+            for (uint weight = 0; weight < 16; weight++)
+                for (uint error = 0; error < SmallErrorCount; error++)
+                    table[weight * SmallErrorCount + error] = ErrorWeight(error, weight);
+            return table;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static uint ErrorWeightCached(ulong error, uint weight)
+        {
+            if (error < SmallErrorCount && weight < 16)
+                return SmallErrorWeights[(int)(weight * SmallErrorCount + error)];
+            return ErrorWeight(error, weight);
+        }
+
         private readonly nuint _xsize;
         private readonly int _stride;
         private readonly uint[] _predErrors0;
@@ -266,6 +289,7 @@ namespace JxlSharp.Decoder
         private long _pred1;
         private long _pred2;
         private long _pred3;
+        private Vector256<long> _predictions;
 
         /// <summary>Sub-predictor outputs shifted left by <see cref="WeightedHeader.KPredExtraBits"/>.</summary>
         public readonly long[] Prediction = new long[WeightedHeader.KNumPredictors];
@@ -407,10 +431,10 @@ namespace JxlSharp.Decoder
             int posNE   = x < xsize - 1u ? posN + 1 : posN;
             int posNW   = x > 0 ? posN - 1 : posN;
 
-            uint w0 = ErrorWeight(_predErrors0[posN] + _predErrors0[posNE] + _predErrors0[posNW], _w0);
-            uint w1 = ErrorWeight(_predErrors1[posN] + _predErrors1[posNE] + _predErrors1[posNW], _w1);
-            uint w2 = ErrorWeight(_predErrors2[posN] + _predErrors2[posNE] + _predErrors2[posNW], _w2);
-            uint w3 = ErrorWeight(_predErrors3[posN] + _predErrors3[posNE] + _predErrors3[posNW], _w3);
+            uint w0 = ErrorWeightCached(_predErrors0[posN] + _predErrors0[posNE] + _predErrors0[posNW], _w0);
+            uint w1 = ErrorWeightCached(_predErrors1[posN] + _predErrors1[posNE] + _predErrors1[posNW], _w1);
+            uint w2 = ErrorWeightCached(_predErrors2[posN] + _predErrors2[posNE] + _predErrors2[posNW], _w2);
+            uint w3 = ErrorWeightCached(_predErrors3[posN] + _predErrors3[posNE] + _predErrors3[posNW], _w3);
 
             long n  = AddBits(neighbors.Top);
             long w  = AddBits(neighbors.Left);
@@ -435,10 +459,17 @@ namespace JxlSharp.Decoder
             long p3 = n - (((teNW * _p3ca) + (teN * _p3cb) + (teNE * _p3cc) +
                             ((nn - n) * _p3cd) + ((nw - w) * _p3ce)) >> 5);
 
-            _pred0 = p0;
-            _pred1 = p1;
-            _pred2 = p2;
-            _pred3 = p3;
+            if (Avx2.IsSupported)
+            {
+                _predictions = Vector256.Create(p0, p1, p2, p3);
+            }
+            else
+            {
+                _pred0 = p0;
+                _pred1 = p1;
+                _pred2 = p2;
+                _pred3 = p3;
+            }
 
             uint weightSum = w0 + w1 + w2 + w3;
             int logShift   = (int)Bits.FloorLog2Nonzero(weightSum) - 4;
@@ -486,10 +517,46 @@ namespace JxlSharp.Decoder
 
             Error[curIdx] = (int)(Pred - val);
 
-            uint err0 = (uint)((Math.Abs(_pred0 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
-            uint err1 = (uint)((Math.Abs(_pred1 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
-            uint err2 = (uint)((Math.Abs(_pred2 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
-            uint err3 = (uint)((Math.Abs(_pred3 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
+            uint err0, err1, err2, err3;
+            if (Avx2.IsSupported)
+            {
+                // The four predictors are independent here; neighbouring pixels are not.
+                Vector256<long> delta = Avx2.Subtract(_predictions, Vector256.Create(val));
+                if (Vector256.EqualsAll(delta, Vector256<long>.Zero))
+                {
+                    // Exact predictions still overwrite the recycled row's errors.
+                    // Adding zero to the NE errors can be omitted.
+                    _predErrors0[curIdx] = 0;
+                    _predErrors1[curIdx] = 0;
+                    _predErrors2[curIdx] = 0;
+                    _predErrors3[curIdx] = 0;
+                    return;
+                }
+
+                Vector256<long> sign = Avx2.CompareGreaterThan(Vector256<long>.Zero, delta);
+                Vector256<long> absolute = Avx2.Subtract(Avx2.Xor(delta, sign), sign);
+                // Preserve Math.Abs(long.MinValue)'s exception, also for non-codec callers.
+                if (Avx.MoveMask(absolute.AsDouble()) != 0)
+                {
+                    throw new OverflowException();
+                }
+
+                Vector256<ulong> errors = Avx2.ShiftRightLogical(
+                    Avx2.Add(absolute, Vector256.Create(WeightedHeader.KPredictionRound)).AsUInt64(),
+                    WeightedHeader.KPredExtraBits);
+                // Only the low 32 bits survive the scalar cast, so a logical shift is exact.
+                err0 = (uint)errors.GetElement(0);
+                err1 = (uint)errors.GetElement(1);
+                err2 = (uint)errors.GetElement(2);
+                err3 = (uint)errors.GetElement(3);
+            }
+            else
+            {
+                err0 = (uint)((Math.Abs(_pred0 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
+                err1 = (uint)((Math.Abs(_pred1 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
+                err2 = (uint)((Math.Abs(_pred2 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
+                err3 = (uint)((Math.Abs(_pred3 - val) + WeightedHeader.KPredictionRound) >> WeightedHeader.KPredExtraBits);
+            }
 
             // For predicting in the next row.
             _predErrors0[curIdx] = err0;

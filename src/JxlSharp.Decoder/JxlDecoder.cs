@@ -1557,6 +1557,19 @@ namespace JxlSharp.Decoder
             return SetMultithreadedImageOutCallback(format, initCb, runCb, destroyCb, this);
         }
 
+        // Internal callbacks that copy into this same buffer can consume pixels in place.
+        // The caller must own the buffer and keep its callback's destination identical.
+        internal JxlDecoderStatus SetImageOutCallbackBuffer(Memory<byte> buffer)
+        {
+            if (_simpleImageOutCallback == null || !_pixelCallback.IsPresent() ||
+                ImageOutBufferSize(_imageOutFormat, out nuint size) != JxlDecoderStatus.Success ||
+                (nuint)buffer.Length < size)
+                return JxlDecoderStatus.Error;
+            _imageOutBuffer = buffer;
+            _imageOutBufferSize = (nuint)buffer.Length;
+            return JxlDecoderStatus.Success;
+        }
+
         /// <summary>
         /// Sets a multithreaded line-by-line output callback to receive the current frame's decoded pixels.
         /// Ported from <c>JxlDecoderSetMultithreadedImageOutCallback</c> in <c>lib/jxl/decode.cc</c>.
@@ -3371,6 +3384,9 @@ namespace JxlSharp.Decoder
             {
                 return status;
             }
+
+            if (!_isFramePreview && _pixelCallback.IsPresent() && !buffer.IsEmpty)
+                _frameDecoder.EnableCallbackOutputBuffer();
 
             nuint orientedXSize = (!undoOrient || _metadata.M.Orientation <= 4) ? xsize : ysize;
 

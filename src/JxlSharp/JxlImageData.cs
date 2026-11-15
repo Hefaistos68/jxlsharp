@@ -143,6 +143,12 @@ namespace JxlSharp
         /// <returns>Extracted <see cref="JxlImageData"/>.</returns>
         public static JxlImageData FromPackedPixelFile(PackedPixelFile pixelFile, int frameIndex = 0)
         {
+            return FromPackedPixelFile(pixelFile, frameIndex, copyPixels: true);
+        }
+
+        // Only skip copying when the packed file is private to the current operation.
+        internal static JxlImageData FromPackedPixelFile(PackedPixelFile pixelFile, int frameIndex, bool copyPixels)
+        {
             ArgumentNullException.ThrowIfNull(pixelFile);
 
             if (pixelFile.Frames.Count == 0)
@@ -156,7 +162,7 @@ namespace JxlSharp
             }
 
             PackedImage color = pixelFile.Frames[frameIndex].Color;
-            byte[] buffer     = color.Pixels().ToArray();
+            byte[] buffer     = copyPixels ? color.Pixels().ToArray() : color.PixelsBuffer;
             uint bits         = pixelFile.Info.BitsPerSample > 0
                 ? pixelFile.Info.BitsPerSample
                 : (uint)PackedImage.BitsPerChannel(color.Format.DataType);
@@ -183,6 +189,12 @@ namespace JxlSharp
         /// </summary>
         /// <returns>A populated <see cref="PackedPixelFile"/>.</returns>
         public PackedPixelFile ToPackedPixelFile()
+        {
+            return ToPackedPixelFile(copyPixels: true);
+        }
+
+        // False is used only with the private snapshot created by the span encoder.
+        internal PackedPixelFile ToPackedPixelFile(bool copyPixels)
         {
             PackedPixelFile ppf = new PackedPixelFile
             {
@@ -211,17 +223,18 @@ namespace JxlSharp
                 JxlEndianness.NativeEndian,
                 0);
 
-            StatusOr<PackedFrame> frameOr = PackedFrame.Create((nuint)Width, (nuint)Height, in format);
+            StatusOr<PackedImage> colorOr = PackedImage.CreateWithPixels((nuint)Width, (nuint)Height,
+                in format, copyPixels ? null : Pixels);
 
-            if (!frameOr.IsOk)
+            if (!colorOr.IsOk)
             {
                 throw new InvalidOperationException("Failed to allocate PackedFrame for JxlImageData.");
             }
 
-            PackedFrame frame = frameOr.Value;
+            PackedFrame frame = new PackedFrame(colorOr.Value);
             int byteCount     = (int)frame.Color.PixelsSize;
 
-            Pixels.AsSpan(0, byteCount).CopyTo(frame.Color.Pixels());
+            if (copyPixels) Pixels.AsSpan(0, byteCount).CopyTo(frame.Color.Pixels());
             ppf.Frames.Add(frame);
 
             return ppf;

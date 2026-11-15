@@ -45,6 +45,24 @@ namespace JxlSharp.Decoder
             206,   206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206,
         };
 
+        // A single lookup replaces the two context lookups and size normalization
+        // in the common 8x8 coefficient loop. Shared by all passes and images.
+        private static readonly ushort[] ZeroDensity8x8 = BuildZeroDensity8x8();
+
+        private static ushort[] BuildZeroDensity8x8()
+        {
+            var contexts = new ushort[64 * 64];
+            for (int nonzeros = 1; nonzeros < 64; nonzeros++)
+                for (int k = 1; k < 64; k++)
+                    contexts[(nonzeros << 6) | k] =
+                        (ushort)(2 * (CoeffNumNonzeroContext[nonzeros] + CoeffFreqContext[k]));
+            return contexts;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static nuint ZeroDensityContext8x8(nuint nonzerosLeft, nuint k, nuint prev) =>
+            (nuint)ZeroDensity8x8[(int)((nonzerosLeft << 6) | k)] + prev;
+
         /// <summary>
         /// Computes the pre-clustered zero-density context index for AC coefficient coding.
         /// </summary>

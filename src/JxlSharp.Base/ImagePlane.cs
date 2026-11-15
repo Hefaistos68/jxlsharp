@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 using System;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 
 namespace JxlSharp.Base
@@ -330,6 +331,7 @@ namespace JxlSharp.Base
 
         private T[] _elements = Array.Empty<T>();
         private int _originOffset;
+        private ArrayPool<T>? _storagePool;
 
         /// <summary>
         /// Initializes a new empty instance of the <see cref="ImagePlane{T}"/> class.
@@ -338,9 +340,10 @@ namespace JxlSharp.Base
         {
         }
 
-        private ImagePlane(uint xsize, uint ysize)
+        private ImagePlane(uint xsize, uint ysize, bool skipZeroInitialization = false, ArrayPool<T>? pool = null)
             : base(xsize, ysize, (nuint)Unsafe.SizeOf<T>())
         {
+            _storagePool = skipZeroInitialization ? pool ?? ArrayPool<T>.Shared : null;
         }
 
         /// <summary>
@@ -375,6 +378,16 @@ namespace JxlSharp.Base
             nuint xsize,
             nuint ysize,
             nuint prePadding = 0)
+            => CreateCore(memoryManager, xsize, ysize, prePadding, false);
+
+        // Only for scratch planes whose consumed pixels and borders are overwritten before reading.
+        internal static StatusOr<ImagePlane<T>> CreateUninitialized(
+            JxlMemoryManager? memoryManager, nuint xsize, nuint ysize, nuint prePadding = 0, ArrayPool<T>? pool = null)
+            => CreateCore(memoryManager, xsize, ysize, prePadding, true, pool);
+
+        private static StatusOr<ImagePlane<T>> CreateCore(
+            JxlMemoryManager? memoryManager, nuint xsize, nuint ysize, nuint prePadding, bool skipZeroInitialization,
+            ArrayPool<T>? pool = null)
         {
             int elemSize = Unsafe.SizeOf<T>();
 
@@ -391,7 +404,7 @@ namespace JxlSharp.Base
                 return Status.Failure("Plane dimensions exceed uint32 range");
             }
 
-            ImagePlane<T> plane = new ImagePlane<T>(xsize32, ysize32);
+            ImagePlane<T> plane = new ImagePlane<T>(xsize32, ysize32, skipZeroInitialization, pool);
             Status status       = plane.Allocate(memoryManager, prePadding);
 
             if (!status)
@@ -582,7 +595,9 @@ namespace JxlSharp.Base
 
             try
             {
-                _elements     = new T[(int)totalElements];
+                _elements     = _storagePool != null
+                    ? _storagePool.Rent((int)totalElements)
+                    : new T[(int)totalElements];
                 _originOffset = (int)padElements;
             }
             catch (OutOfMemoryException)
@@ -600,20 +615,28 @@ namespace JxlSharp.Base
             {
                 T[] tempElements = _elements;
                 int tempOrigin   = _originOffset;
+                ArrayPool<T>? tempPool = _storagePool;
 
                 _elements     = typedOther._elements;
                 _originOffset = typedOther._originOffset;
+                _storagePool = typedOther._storagePool;
 
                 typedOther._elements     = tempElements;
                 typedOther._originOffset = tempOrigin;
+                typedOther._storagePool = tempPool;
             }
         }
 
         /// <inheritdoc />
         protected override void DisposeDerived()
         {
+            T[] elements = _elements;
+            ArrayPool<T>? pool = _storagePool;
             _elements     = Array.Empty<T>();
             _originOffset = 0;
+            _storagePool = null;
+            if (elements.Length != 0)
+                pool?.Return(elements);
         }
     }
 

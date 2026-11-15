@@ -180,10 +180,28 @@ namespace JxlSharp.Decoder
                 null,
                 () =>
                 {
+                    if (((_bitsWritten | other.BitsWritten) & 7u) == 0)
+                    {
+                        ReadOnlySpan<byte> source = other.GetSpan();
+                        source.CopyTo(_storage.Span.Slice((int)(_bitsWritten >> 3), source.Length));
+                        _bitsWritten += (nuint)source.Length * 8;
+                        _storage[_bitsWritten >> 3] = 0;
+                        GC.KeepAlive(other);
+                        return true;
+                    }
+
                     nuint fullBytes     = other.BitsWritten / Common.BitsPerByte;
                     nuint remainingBits = other.BitsWritten % Common.BitsPerByte;
 
-                    for (nuint i = 0; i < fullBytes; ++i)
+                    nuint i = 0;
+                    // Consume seven bytes per write; keep the load within the source.
+                    for (; i + 8 <= fullBytes; i += 7)
+                    {
+                        ulong word = ByteOrder.LoadLE64(other._storage.Span.Slice((int)i, 8));
+                        Write(56, word & 0x00FFFFFFFFFFFFFFUL);
+                    }
+
+                    for (; i < fullBytes; ++i)
                     {
                         Write(8, other._storage[i]);
                     }

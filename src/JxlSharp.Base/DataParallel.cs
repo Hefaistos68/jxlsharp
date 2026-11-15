@@ -115,30 +115,12 @@ namespace JxlSharp.Base
                 return true;
             }
 
-            RunCallState callState = new RunCallState(initFunc, dataFunc);
-
-            // The runner_ uses the C convention and returns 0 in case of error, so we
-            // convert it to a Status.
             if (_runner is null)
             {
-                if (RunCallState.CallInitFunc(callState, 1) != DataParallel.ParallelRetSuccess)
-                {
-                    return Status.Failure("Failed to initialize thread");
-                }
-
-                for (uint i = begin; i < end; i++)
-                {
-                    RunCallState.CallDataFunc(callState, i, 0);
-                }
-
-                if (callState.HasError)
-                {
-                    return Status.Failure($"[{caller}] failed");
-                }
-
-                return true;
+                return RunSerial(begin, end, initFunc, dataFunc, caller);
             }
 
+            RunCallState callState = new RunCallState(initFunc, dataFunc);
             int ret = _runner(
                 _runnerOpaque,
                 callState,
@@ -150,6 +132,20 @@ namespace JxlSharp.Base
             if (ret != DataParallel.ParallelRetSuccess || callState.HasError)
             {
                 return Status.Failure($"[{caller}] failed");
+            }
+
+            return true;
+        }
+
+        internal static Status RunSerial(uint begin, uint end, Func<nuint, Status> initFunc,
+            Func<uint, nuint, Status> dataFunc, string caller)
+        {
+            if (begin > end) return Status.Failure("begin > end");
+            if (begin == end) return true;
+            if (!initFunc(1)) return Status.Failure("Failed to initialize thread");
+            for (uint i = begin; i < end; i++)
+            {
+                if (!dataFunc(i, 0)) return Status.Failure($"[{caller}] failed");
             }
 
             return true;
@@ -239,9 +235,7 @@ namespace JxlSharp.Base
         {
             if (pool is null)
             {
-                ThreadPool defaultPool = new ThreadPool(null, null);
-
-                return defaultPool.Run(begin, end, initFunc, dataFunc, caller);
+                return ThreadPool.RunSerial(begin, end, initFunc, dataFunc, caller);
             }
 
             return pool.Run(begin, end, initFunc, dataFunc, caller);
