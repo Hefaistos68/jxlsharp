@@ -355,6 +355,7 @@ namespace JxlSharp.Decoder
             _decState.MainOutput.Callback      = pixelCallback;
             _decState.MainOutput.Buffer        = imageBuffer;
             _decState.MainOutput.BufferSize    = imageBufferSize;
+            _decState.MainOutput.CallbackBuffer = false;
 
             StatusOr<nuint> strideOr = GetStride(dims.XSize, format);
 
@@ -385,6 +386,13 @@ namespace JxlSharp.Decoder
             ConfigureFastXybIfEligible(format);
 
             return true;
+        }
+
+        internal void EnableCallbackOutputBuffer()
+        {
+            _decState.MainOutput.CallbackBuffer = true;
+            // Keep the standard callback pipeline even if a fused buffer-only path is available.
+            _decState.FastXybSrgb8Conversion = false;
         }
 
         /// <summary>
@@ -1962,7 +1970,7 @@ namespace JxlSharp.Decoder
 
             if (_mode == Mode.Normal && _decState.RenderPipeline != null)
             {
-                Status pipeStatus = _decState.RenderPipeline.PrepareForThreads(storageSize, useGroupIds);
+                Status pipeStatus = _decState.RenderPipeline.PrepareForDecoderThreads(storageSize, useGroupIds);
 
                 if (!pipeStatus.IsOk)
                 {

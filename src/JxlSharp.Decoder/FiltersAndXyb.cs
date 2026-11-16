@@ -549,6 +549,51 @@ namespace JxlSharp.Decoder
         }
 
         /// <summary>
+        /// Inverts the pixel-wise RGB-to-XYB conversion for 8 pixels in parallel using <see cref="Vector256{Single}"/>.
+        /// Ported from <c>jxl::HWY_NAMESPACE::XybToRgb</c> in <c>lib/jxl/dec_xyb-inl.h</c>.
+        /// </summary>
+        /// <param name="opsinX">4 opsin X samples.</param>
+        /// <param name="opsinY">4 opsin Y samples.</param>
+        /// <param name="opsinB">4 opsin B samples.</param>
+        /// <param name="opsinParams">Opsin parameters.</param>
+        /// <param name="linearR">Output 4 linear R samples.</param>
+        /// <param name="linearG">Output 4 linear G samples.</param>
+        /// <param name="linearB">Output 4 linear B samples.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void XybToRgb(
+            Vector256<float> opsinX,
+            Vector256<float> opsinY,
+            Vector256<float> opsinB,
+            OpsinParams opsinParams,
+            out Vector256<float> linearR,
+            out Vector256<float> linearG,
+            out Vector256<float> linearB)
+        {
+            Vector256<float> negBiasR = Vector256.Create(opsinParams.OpsinBiases[0]);
+            Vector256<float> negBiasG = Vector256.Create(opsinParams.OpsinBiases[1]);
+            Vector256<float> negBiasB = Vector256.Create(opsinParams.OpsinBiases[2]);
+
+            Vector256<float> gammaR = (opsinY + opsinX) - Vector256.Create(opsinParams.OpsinBiasesCbrt[0]);
+            Vector256<float> gammaG = (opsinY - opsinX) - Vector256.Create(opsinParams.OpsinBiasesCbrt[1]);
+            Vector256<float> gammaB = opsinB - Vector256.Create(opsinParams.OpsinBiasesCbrt[2]);
+
+            Vector256<float> mixedR = (gammaR * gammaR * gammaR) + negBiasR;
+            Vector256<float> mixedG = (gammaG * gammaG * gammaG) + negBiasG;
+            Vector256<float> mixedB = (gammaB * gammaB * gammaB) + negBiasB;
+
+            float[] m = opsinParams.InverseOpsinMatrix;
+            linearR   = (Vector256.Create(m[0 * 4]) * mixedR) +
+                        (Vector256.Create(m[1 * 4]) * mixedG) +
+                        (Vector256.Create(m[2 * 4]) * mixedB);
+            linearG   = (Vector256.Create(m[3 * 4]) * mixedR) +
+                        (Vector256.Create(m[4 * 4]) * mixedG) +
+                        (Vector256.Create(m[5 * 4]) * mixedB);
+            linearB   = (Vector256.Create(m[6 * 4]) * mixedR) +
+                        (Vector256.Create(m[7 * 4]) * mixedG) +
+                        (Vector256.Create(m[8 * 4]) * mixedB);
+        }
+
+        /// <summary>
         /// Converts <paramref name="rect"/> of <paramref name="opsin"/> from XYB to linear RGB in <paramref name="linear"/>.
         /// Ported from <c>jxl::OpsinToLinear</c> in <c>lib/jxl/dec_xyb.cc</c>.
         /// </summary>
@@ -694,6 +739,28 @@ namespace JxlSharp.Decoder
             Span<float> rowLinear2        = linear.PlaneRow(2, (nuint)y);
             int xsize                     = rect.XSize;
             int x                         = 0;
+
+            if (System.Runtime.Intrinsics.X86.Avx2.IsSupported)
+            {
+                for (; x + 8 <= xsize; x += 8)
+                {
+                    Vector256<float> inX = Vector256.Create(rowOpsin0.Slice(x, 8));
+                    Vector256<float> inY = Vector256.Create(rowOpsin1.Slice(x, 8));
+                    Vector256<float> inB = Vector256.Create(rowOpsin2.Slice(x, 8));
+                    XybToRgb(
+                        inX,
+                        inY,
+                        inB,
+                        opsinParams,
+                        out Vector256<float> linR,
+                        out Vector256<float> linG,
+                        out Vector256<float> linB);
+                    linR.CopyTo(rowLinear0.Slice(x, 8));
+                    linG.CopyTo(rowLinear1.Slice(x, 8));
+                    linB.CopyTo(rowLinear2.Slice(x, 8));
+                }
+
+            }
 
             for (; x + 4 <= xsize; x += 4)
             {

@@ -12,6 +12,8 @@ using JxlSharp.Extras;
 
 namespace JxlSharp
 {
+    internal enum PrimaryImageHandling { Copy, TakePixels, Skip }
+
     /// <summary>
     /// Represents the complete output of an extended JPEG XL decode operation, including the full
     /// <see cref="PackedPixelFile"/> (all frames, extra channels, ICC profiles, and metadata boxes),
@@ -77,14 +79,20 @@ namespace JxlSharp
             PackedPixelFile pixelFile,
             byte[]? reconstructedJpegBytes = null,
             nuint consumedBytes = 0)
+            : this(pixelFile, reconstructedJpegBytes, consumedBytes, PrimaryImageHandling.Copy)
+        {
+        }
+
+        internal JxlDecodeResult(PackedPixelFile pixelFile, byte[]? reconstructedJpegBytes,
+            nuint consumedBytes, PrimaryImageHandling primaryImageHandling)
         {
             ArgumentNullException.ThrowIfNull(pixelFile);
 
             PixelFile              = pixelFile;
             ReconstructedJpegBytes = reconstructedJpegBytes;
             ConsumedBytes          = consumedBytes;
-            PrimaryImage           = pixelFile.Frames.Count > 0
-                ? JxlImageData.FromPackedPixelFile(pixelFile, 0)
+            PrimaryImage           = primaryImageHandling != PrimaryImageHandling.Skip && pixelFile.Frames.Count > 0
+                ? JxlImageData.FromPackedPixelFile(pixelFile, 0, primaryImageHandling == PrimaryImageHandling.Copy)
                 : null;
         }
     }

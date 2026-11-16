@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using JxlSharp.Base;
 using JxlSharp.Cms;
@@ -489,11 +490,11 @@ namespace JxlSharp.Encoder
         /// <param name="data">Bytes to append.</param>
         public void Append(ReadOnlySpan<byte> data)
         {
-            for (int i = 0; i < data.Length; i++)
-            {
-                _buffer.Add(data[i]);
-            }
+            _buffer.AddRange(data);
         }
+
+        internal int AppendFastLosslessFrame(JxlFastLosslessFrameState frame)
+            => EncFastLossless.AppendOutput(frame, _buffer);
 
         /// <summary>
         /// Appends an ISO BMFF container box with the given 4-byte <paramref name="boxType"/> and <paramref name="payload"/>.
@@ -521,10 +522,7 @@ namespace JxlSharp.Encoder
             int avail  = AvailableBytes;
             int toCopy = Math.Min(avail, output.Length);
 
-            for (int i = 0; i < toCopy; i++)
-            {
-                output[i] = _buffer[_readOffset + i];
-            }
+            CollectionsMarshal.AsSpan(_buffer).Slice(_readOffset, toCopy).CopyTo(output);
 
             _readOffset += toCopy;
             written      = toCopy;
@@ -546,7 +544,7 @@ namespace JxlSharp.Encoder
     /// FastLossless, lossless JPEG transcoding, extra channels, and ISO BMFF container boxes.
     /// Ported from <c>JxlEncoder</c> in <c>lib/jxl/encode_internal.h</c> and <c>lib/jxl/encode.cc</c>.
     /// </summary>
-    public sealed class JxlEncoder : IDisposable
+    public sealed partial class JxlEncoder : IDisposable
     {
         /// <summary>12-byte ISO BMFF JPEG XL container signature box (<c>JXL </c>) + <c>ftyp</c> box.</summary>
         public static ReadOnlySpan<byte> ContainerHeader => new byte[]
@@ -590,6 +588,7 @@ namespace JxlSharp.Encoder
         {
             public required JxlEncoderFrameSettingsValues OptionValues;
             public ImageBundle? Bundle;
+            public FastLosslessInput? FastInput;
             public byte[]? JpegBytes;
             public readonly Dictionary<int, byte[]> ExtraChannelBuffers = new Dictionary<int, byte[]>();
             public readonly Dictionary<int, JxlPixelFormat> ExtraChannelFormats = new Dictionary<int, JxlPixelFormat>();
@@ -1534,6 +1533,11 @@ namespace JxlSharp.Encoder
                 return SetError(JxlEncoderError.BadInput);
             }
 
+            if (CanUseFastLossless(frameSettings.Values, in pixelFormat))
+            {
+                return QueueFastLossless(frameSettings, in pixelFormat, buffer, xsize, ysize);
+            }
+
             ImageBundle ib = new ImageBundle(_memoryManager, _metadata.M);
             Status convOk  = ConvertBufferToImageBundle(frameSettings, in pixelFormat, buffer, xsize, ysize, ib);
 
@@ -1574,6 +1578,11 @@ namespace JxlSharp.Encoder
             }
 
             QueuedFrame last = _inputQueue[_inputQueue.Count - 1];
+
+            if (last.FastInput != null && !MaterializeFastInput(last))
+            {
+                return SetError(JxlEncoderError.BadInput);
+            }
 
             if (last.Bundle == null)
             {
@@ -1840,7 +1849,7 @@ namespace JxlSharp.Encoder
             if (_useContainer && _framesClosed && _codestreamAccumulator.Count > 0)
             {
                 ReadOnlySpan<byte> jxlcType = "jxlc"u8;
-                _output.AppendBox(jxlcType, _codestreamAccumulator.ToArray());
+                _output.AppendBox(jxlcType, CollectionsMarshal.AsSpan(_codestreamAccumulator));
                 _codestreamAccumulator.Clear();
             }
 
@@ -1957,6 +1966,16 @@ namespace JxlSharp.Encoder
 
         private JxlEncoderStatus EncodeQueuedFrame(QueuedFrame frame, bool isLastFrame)
         {
+            if (frame.FastInput != null)
+            {
+                if (CanUseFastLossless(frame.OptionValues, in frame.FastInput.Format))
+                {
+                    return EncodeFastLosslessFrame(frame, isLastFrame);
+                }
+
+                if (!MaterializeFastInput(frame)) return SetError(JxlEncoderError.BadInput);
+            }
+
             if (frame.Bundle == null)
             {
                 return SetError(JxlEncoderError.BadInput);
@@ -2132,10 +2151,7 @@ namespace JxlSharp.Encoder
 
             if (_useContainer)
             {
-                for (int i = 0; i < bytes.Length; i++)
-                {
-                    _codestreamAccumulator.Add(bytes[i]);
-                }
+                _codestreamAccumulator.AddRange(bytes);
             }
             else
             {

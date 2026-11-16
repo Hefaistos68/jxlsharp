@@ -1301,7 +1301,7 @@ namespace JxlSharp.Encoder
                 AcStrategyType cand = candidates[i];
                 float mul           = AdjustEntropyMul8x8(cand, entropyMul[i], butteraugliDistance);
                 float entropyCost   = ForwardAndRoundtrip8x8(cand, quant, (cmapX, cmapB), (weights.CostDelta, weights.ZerosMul), block, coeffs, recon);
-                float lossScalar    = Compute8x8LossScalar(recon, masking, quant);
+                float lossScalar    = Compute8x8Loss(recon, masking, quant);
                 float cost          = (entropyCost * mul) + (weights.InfoLossMul * lossScalar);
 
                 if (cost < bestCost)
@@ -1560,25 +1560,9 @@ namespace JxlSharp.Encoder
                 ReadOnlySpan<float> invMat = _config.Dequant!.InvMatrixSpan(strategy, (nuint)c, 64);
                 ReadOnlySpan<float> mat    = _config.Dequant.MatrixSpan(strategy, (nuint)c, 64);
                 float cflFactor            = c == 0 ? cmapX : (c == 2 ? cmapB : 0.0f);
-                float entropySum           = 0.0f;
-                uint numNzeros             = 0;
-
-                for (int k = 0; k < 64; ++k)
-                {
-                    float val  = (coeffs[c * 64 + k] - cflFactor * coeffs[64 + k]) * (invMat[k] * quant);
-                    float rval = MathF.Round(val);
-                    float diff = val - rval;
-                    float q    = MathF.Abs(rval);
-
-                    entropySum += MathF.Sqrt(q);
-
-                    if (q != 0.0f)
-                    {
-                        numNzeros++;
-                    }
-
-                    coeffs[c * 64 + k] = mat[k] * diff;
-                }
+                float entropySum = QuantizeAndDequantizeChannel(
+                    coeffs.Slice(c * 64, 64), coeffs.Slice(64, 64), invMat, mat,
+                    quant, cflFactor, out uint numNzeros);
 
                 entropy   += costDelta * entropySum;
                 uint nbits = (uint)Bits.CeilLog2Nonzero(numNzeros + 1) + 1;
@@ -1588,8 +1572,54 @@ namespace JxlSharp.Encoder
             return entropy;
         }
 
+        internal static float QuantizeAndDequantizeChannel(Span<float> coefficients,
+            ReadOnlySpan<float> luma, ReadOnlySpan<float> invMatrix, ReadOnlySpan<float> matrix,
+            float quant, float cflFactor, out uint nonzeros)
+        {
+            float entropy = 0.0f;
+            nonzeros = 0;
+            if (Avx2.IsSupported)
+            {
+                var qscale = Vector256.Create(quant);
+                var cfl = Vector256.Create(cflFactor);
+                for (int k = 0; k < 64; k += 8)
+                {
+                    var values = (Vector256.Create(coefficients.Slice(k, 8)) - cfl * Vector256.Create(luma.Slice(k, 8)))
+                        * (Vector256.Create(invMatrix.Slice(k, 8)) * qscale);
+                    var rounded = Avx.RoundToNearestInteger(values);
+                    var magnitude = Vector256.Abs(rounded);
+                    uint zeros = (uint)Avx.MoveMask(Vector256.Equals(magnitude, Vector256<float>.Zero));
+                    nonzeros += (uint)BitOperations.PopCount(zeros ^ 255u);
+                    entropy = AddOrdered(entropy, Vector256.Sqrt(magnitude));
+                    (Vector256.Create(matrix.Slice(k, 8)) * (values - rounded)).CopyTo(coefficients.Slice(k));
+                }
+                return entropy;
+            }
+            for (int k = 0; k < 64; k++)
+            {
+                float value = (coefficients[k] - cflFactor * luma[k]) * (invMatrix[k] * quant);
+                float rounded = MathF.Round(value);
+                float magnitude = MathF.Abs(rounded);
+                entropy += MathF.Sqrt(magnitude);
+                if (magnitude != 0.0f) nonzeros++;
+                coefficients[k] = matrix[k] * (value - rounded);
+            }
+            return entropy;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float AddOrdered(float sum, Vector256<float> values)
+        {
+            // A horizontal reduction would reassociate rounding and can change the chosen strategy.
+            sum += values.GetElement(0); sum += values.GetElement(1);
+            sum += values.GetElement(2); sum += values.GetElement(3);
+            sum += values.GetElement(4); sum += values.GetElement(5);
+            sum += values.GetElement(6); sum += values.GetElement(7);
+            return sum;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private static float Compute8x8LossScalar(
+        internal static float Compute8x8Loss(
             ReadOnlySpan<float> reconError,
             float masking,
             float quant)
@@ -1654,7 +1684,7 @@ namespace JxlSharp.Encoder
 
                 for (int i = 0; i < 64; ++i)
                 {
-                    float v  = masku * reconError[c * 64 + i];
+                    float v  = masku * reconError[(c * 64) + i];
                     float v2 = v * v;
                     float v4 = v2 * v2;
 

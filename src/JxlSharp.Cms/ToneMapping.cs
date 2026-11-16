@@ -298,6 +298,44 @@ namespace JxlSharp.Cms
             green *= ratio;
             blue  *= ratio;
         }
+
+        /// <summary>
+        /// Applies the HLG OOTF in-place to 8-lane SIMD RGB vectors.
+        /// </summary>
+        /// <param name="red">Red channel vector.</param>
+        /// <param name="green">Green channel vector.</param>
+        /// <param name="blue">Blue channel vector.</param>
+        public void Apply(ref Vector256<float> red, ref Vector256<float> green, ref Vector256<float> blue)
+        {
+            if (!_applyOotf)
+            {
+                return;
+            }
+
+            Vector256<float> luminance = (Vector256.Create(_redY) * red) +
+                                         (Vector256.Create(_greenY) * green) +
+                                         (Vector256.Create(_blueY) * blue);
+            Vector256<float> ratio     = Vector256.Min(FastMath.FastPowf(luminance, Vector256.Create(_exponent)), Vector256.Create(1e9f));
+
+            // The approximation requires finite, positive inputs. Preserve scalar Pow
+            // semantics for black, negative luminance and non-finite samples.
+            if (!Vector256.GreaterThanAll(luminance, Vector256<float>.Zero) ||
+                !Vector256.LessThanAll(luminance, Vector256.Create(float.PositiveInfinity)))
+            {
+                for (int lane = 0; lane < Vector256<float>.Count; lane++)
+                {
+                    float value = luminance.GetElement(lane);
+                    if (!(value > 0.0f) || !float.IsFinite(value))
+                    {
+                        ratio = ratio.WithElement(lane, Math.Min(MathF.Pow(value, _exponent), 1e9f));
+                    }
+                }
+            }
+
+            red   *= ratio;
+            green *= ratio;
+            blue  *= ratio;
+        }
     }
 
     /// <summary>

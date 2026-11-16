@@ -6,6 +6,8 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using JxlSharp.Base;
 
 namespace JxlSharp.Tools
@@ -567,7 +569,33 @@ namespace JxlSharp.Tools
             nuint n2       = (nuint)(n - 2) & RingBufferMask;
             bool hasOut    = !outPos.IsEmpty;
 
-            for (nuint col = 0; col < width; ++col)
+            nuint col = 0;
+            if (Avx2.IsSupported)
+            {
+                for (; col + 8 <= width; col += 8)
+                {
+                    int cIdx   = (int)col;
+                    int idx0   = (int)(width * n0 + col);
+                    int idx1   = (int)(width * n1 + col);
+                    int idx2   = (int)(width * n2 + col);
+                    Vector256<float> sum  = Vector256.Create(inPos.Slice(cIdx, 8));
+                    Vector256<float> val1 = Vector256.Create(n21) * sum - Vector256.Create(d11) * Vector256.Create(y1.Slice(idx1, 8)) - Vector256.Create(y1.Slice(idx2, 8));
+                    Vector256<float> val3 = Vector256.Create(n23) * sum - Vector256.Create(d13) * Vector256.Create(y3.Slice(idx1, 8)) - Vector256.Create(y3.Slice(idx2, 8));
+                    Vector256<float> val5 = Vector256.Create(n25) * sum - Vector256.Create(d15) * Vector256.Create(y5.Slice(idx1, 8)) - Vector256.Create(y5.Slice(idx2, 8));
+
+                    val1.CopyTo(y1.Slice(idx0, 8));
+                    val3.CopyTo(y3.Slice(idx0, 8));
+                    val5.CopyTo(y5.Slice(idx0, 8));
+
+                    if (hasOut)
+                    {
+                        (val1 + (val3 + val5)).CopyTo(outPos.Slice(cIdx, 8));
+                    }
+
+                }
+            }
+
+            for (; col < width; ++col)
             {
                 int cIdx   = (int)col;
                 int idx0   = (int)(width * n0 + col);
@@ -613,7 +641,29 @@ namespace JxlSharp.Tools
             nuint n1       = (nuint)(n - 1) & RingBufferMask;
             nuint n2       = (nuint)(n - 2) & RingBufferMask;
 
-            for (nuint col = 0; col < width; ++col)
+            nuint col = 0;
+            if (Avx2.IsSupported)
+            {
+                for (; col + 8 <= width; col += 8)
+                {
+                    int cIdx   = (int)col;
+                    int idx0   = (int)(width * n0 + col);
+                    int idx1   = (int)(width * n1 + col);
+                    int idx2   = (int)(width * n2 + col);
+                    Vector256<float> sum  = Vector256.Create(pos1.Slice(cIdx, 8)) + Vector256.Create(pos2.Slice(cIdx, 8));
+                    Vector256<float> val1 = Vector256.Create(n21) * sum - Vector256.Create(d11) * Vector256.Create(y1.Slice(idx1, 8)) - Vector256.Create(y1.Slice(idx2, 8));
+                    Vector256<float> val3 = Vector256.Create(n23) * sum - Vector256.Create(d13) * Vector256.Create(y3.Slice(idx1, 8)) - Vector256.Create(y3.Slice(idx2, 8));
+                    Vector256<float> val5 = Vector256.Create(n25) * sum - Vector256.Create(d15) * Vector256.Create(y5.Slice(idx1, 8)) - Vector256.Create(y5.Slice(idx2, 8));
+
+                    val1.CopyTo(y1.Slice(idx0, 8));
+                    val3.CopyTo(y3.Slice(idx0, 8));
+                    val5.CopyTo(y5.Slice(idx0, 8));
+                    (val1 + (val3 + val5)).CopyTo(outPos.Slice(cIdx, 8));
+
+                }
+            }
+
+            for (; col < width; ++col)
             {
                 int cIdx   = (int)col;
                 int idx0   = (int)(width * n0 + col);
@@ -673,112 +723,45 @@ namespace JxlSharp.Tools
             }
         }
 
+        // Retain the four-step horizontal recurrence and separate multiply/add rounding.
+        // Only the representation changes from four scalar fields to a SIMD register.
         private readonly struct Vec4
         {
-            public readonly float X;
-            public readonly float Y;
-            public readonly float Z;
-            public readonly float W;
+            private readonly Vector128<float> _value;
+            public float X { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _value.GetElement(0); }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4(float x, float y, float z, float w)
-            {
-                X = x;
-                Y = y;
-                Z = z;
-                W = w;
-            }
-
+            public Vec4(float x, float y, float z, float w) => _value = Vector128.Create(x, y, z, w);
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 Set(float v)
-            {
-                return new Vec4(v, v, v, v);
-            }
-
+            private Vec4(Vector128<float> value) => _value = value;
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 LoadArray(float[] arr, int offset)
-            {
-                return new Vec4(arr[offset + 0], arr[offset + 1], arr[offset + 2], arr[offset + 3]);
-            }
-
+            public static Vec4 Set(float v) => new Vec4(Vector128.Create(v));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 Load(ReadOnlySpan<float> span)
-            {
-                return new Vec4(span[0], span[1], span[2], span[3]);
-            }
-
+            public static Vec4 LoadArray(float[] array, int offset) => new Vec4(Vector128.Create(array.AsSpan(offset, 4)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 Add(Vec4 a, Vec4 b)
-            {
-                return new Vec4(a.X + b.X, a.Y + b.Y, a.Z + b.Z, a.W + b.W);
-            }
-
+            public static Vec4 Load(ReadOnlySpan<float> span) => new Vec4(Vector128.Create(span.Slice(0, 4)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 Mul(Vec4 a, Vec4 b)
-            {
-                return new Vec4(a.X * b.X, a.Y * b.Y, a.Z * b.Z, a.W * b.W);
-            }
-
+            public static Vec4 Add(Vec4 a, Vec4 b) => new Vec4(a._value + b._value);
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public static Vec4 MulAdd(Vec4 a, Vec4 b, Vec4 c)
-            {
-                return new Vec4(
-                    a.X * b.X + c.X,
-                    a.Y * b.Y + c.Y,
-                    a.Z * b.Z + c.Z,
-                    a.W * b.W + c.W);
-            }
-
+            public static Vec4 Mul(Vec4 a, Vec4 b) => new Vec4(a._value * b._value);
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 Broadcast0()
-            {
-                return new Vec4(X, X, X, X);
-            }
-
+            public static Vec4 MulAdd(Vec4 a, Vec4 b, Vec4 c) => new Vec4(a._value * b._value + c._value);
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 Broadcast1()
-            {
-                return new Vec4(Y, Y, Y, Y);
-            }
-
+            public Vec4 Broadcast0() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(0)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 Broadcast2()
-            {
-                return new Vec4(Z, Z, Z, Z);
-            }
-
+            public Vec4 Broadcast1() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(1)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 Broadcast3()
-            {
-                return new Vec4(W, W, W, W);
-            }
-
+            public Vec4 Broadcast2() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(2)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 ShiftLeft1()
-            {
-                return new Vec4(0.0f, X, Y, Z);
-            }
-
+            public Vec4 Broadcast3() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(3)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 ShiftLeft2()
-            {
-                return new Vec4(0.0f, 0.0f, X, Y);
-            }
-
+            public Vec4 ShiftLeft1() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(-1, 0, 1, 2)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Vec4 ShiftLeft3()
-            {
-                return new Vec4(0.0f, 0.0f, 0.0f, X);
-            }
-
+            public Vec4 ShiftLeft2() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(-1, -1, 0, 1)));
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public void Store(Span<float> span)
-            {
-                span[0] = X;
-                span[1] = Y;
-                span[2] = Z;
-                span[3] = W;
-            }
+            public Vec4 ShiftLeft3() => new Vec4(Vector128.Shuffle(_value, Vector128.Create(-1, -1, -1, 0)));
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Store(Span<float> span) => _value.CopyTo(span);
         }
     }
 }

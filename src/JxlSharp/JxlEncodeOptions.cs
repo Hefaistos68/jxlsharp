@@ -63,6 +63,8 @@ namespace JxlSharp
 
         /// <summary>
         /// Gets or sets the number of worker threads (<c>-1</c> or <c>0</c> = processor default, <c>1</c> = single-threaded).
+        /// This limit applies to each encode operation, not to the whole process.
+        /// For simultaneous images, bound outer concurrency and tune this limit per image.
         /// </summary>
         public int NumThreads { get; set; } = -1;
 

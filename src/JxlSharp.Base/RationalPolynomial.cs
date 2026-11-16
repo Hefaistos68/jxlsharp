@@ -76,5 +76,36 @@ namespace JxlSharp.Base
 
             return yp / yq;
         }
+
+        /// <summary>
+        /// Evaluates a rational polynomial over a 8-lane <see cref="Vector256{Single}"/> using Horner's scheme.
+        /// </summary>
+        /// <param name="x">8-lane input vector.</param>
+        /// <param name="p">Numerator polynomial coefficients <c>p[0..degP]</c>.</param>
+        /// <param name="q">Denominator polynomial coefficients <c>q[0..degQ]</c>.</param>
+        /// <returns>Evaluated 8-lane vector <c>P(x) / Q(x)</c>.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> EvalRationalPolynomial(
+            Vector256<float> x,
+            ReadOnlySpan<float> p,
+            ReadOnlySpan<float> q)
+        {
+            int degP            = p.Length - 1;
+            int degQ            = q.Length - 1;
+            Vector256<float> yp = Vector256.Create(p[degP]);
+            Vector256<float> yq = Vector256.Create(q[degQ]);
+
+            for (int i = degP - 1; i >= 0; --i)
+            {
+                yp = (yp * x) + Vector256.Create(p[i]);
+            }
+
+            for (int i = degQ - 1; i >= 0; --i)
+            {
+                yq = (yq * x) + Vector256.Create(q[i]);
+            }
+
+            return yp / yq;
+        }
     }
 }

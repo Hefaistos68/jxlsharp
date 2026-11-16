@@ -79,7 +79,7 @@ namespace JxlSharp.Extras
         /// <summary>Gets the underlying raw interleaved byte array.</summary>
         public byte[] PixelsBuffer => _pixels;
 
-        private PackedImage(nuint xsize, nuint ysize, JxlPixelFormat format, nuint stride)
+        private PackedImage(nuint xsize, nuint ysize, JxlPixelFormat format, nuint stride, byte[]? pixels = null)
         {
             XSize       = xsize;
             YSize       = ysize;
@@ -88,7 +88,7 @@ namespace JxlSharp.Extras
             PixelsSize  = ysize * stride;
 
             int allocLen     = (int)Math.Max((nuint)1, PixelsSize);
-            _pixels          = new byte[allocLen];
+            _pixels          = pixels ?? new byte[allocLen];
             _bytesPerChannel = BitsPerChannel(format.DataType) / Common.KBitsPerByte;
             _pixelStride     = format.NumChannels * _bytesPerChannel;
             _swapEndianness  = SwapEndianness(format.Endianness);
@@ -109,6 +109,13 @@ namespace JxlSharp.Extras
             JxlMemoryManager? memoryManager = null)
         {
             _ = memoryManager;
+            return CreateWithPixels(xsize, ysize, in format, null);
+        }
+
+        // Non-null storage must be privately owned by the synchronous operation.
+        internal static StatusOr<PackedImage> CreateWithPixels(nuint xsize, nuint ysize,
+            in JxlPixelFormat format, byte[]? pixels)
+        {
             StatusOr<nuint> strideResult = CalcStride(in format, xsize);
 
             if (!strideResult.IsOk)
@@ -128,7 +135,12 @@ namespace JxlSharp.Extras
                 }
             }
 
-            return new PackedImage(xsize, ysize, format, stride);
+            if (pixels is not null && (nuint)pixels.Length < ysize * stride)
+            {
+                return Status.Failure("Pixel buffer too small");
+            }
+
+            return new PackedImage(xsize, ysize, format, stride, pixels);
         }
 
         /// <summary>

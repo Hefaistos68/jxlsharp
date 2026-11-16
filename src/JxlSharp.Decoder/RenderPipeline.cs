@@ -478,6 +478,15 @@ namespace JxlSharp.Decoder
                 return true;
             }
 
+            // Decoder-only fusion may consume the immediately preceding color stage.
+            internal TStage? RemoveLastStage<TStage>() where TStage : RenderPipelineStage
+            {
+                if (_stages.Count == 0 || _stages[^1] is not TStage stage)
+                    return null;
+                _stages.RemoveAt(_stages.Count - 1);
+                return stage;
+            }
+
             /// <summary>
             /// Enables using the simple (full-frame buffer) implementation of the pipeline.
             /// </summary>
@@ -679,6 +688,10 @@ namespace JxlSharp.Decoder
 
             return PrepareForThreadsInternal(num, useGroupIds);
         }
+
+        // Only the decoder opts into scratch inputs that it fully writes before submitting a group.
+        internal virtual Status PrepareForDecoderThreads(nuint num, bool useGroupIds) =>
+            PrepareForThreads(num, useGroupIds);
 
         /// <summary>
         /// Retrieves the input buffers for <paramref name="groupId"/> and <paramref name="threadId"/>.
@@ -1562,6 +1575,7 @@ namespace JxlSharp.Decoder
         }
 
         private bool _useGroupIds;
+        private bool _skipInputZeroInitialization;
         private readonly List<ImagePlane<float>> _bordersHorizontal = new List<ImagePlane<float>>();
         private readonly List<ImagePlane<float>> _bordersVertical = new List<ImagePlane<float>>();
         private readonly GroupBorderAssigner _groupBorderAssigner = new GroupBorderAssigner();
@@ -1711,6 +1725,19 @@ namespace JxlSharp.Decoder
             }
 
             return true;
+        }
+
+        internal override Status PrepareForDecoderThreads(nuint num, bool useGroupIds)
+        {
+            _skipInputZeroInitialization = true;
+            try
+            {
+                return PrepareForThreads(num, useGroupIds);
+            }
+            finally
+            {
+                _skipInputZeroInitialization = false;
+            }
         }
 
         /// <inheritdoc />
@@ -2104,11 +2131,13 @@ namespace JxlSharp.Decoder
 
                 for (nuint c = 0; c < (nuint)shifts.Length; c++)
                 {
-                    StatusOr<ImagePlane<float>> res = ImagePlane<float>.Create(
-                        MemoryManager,
-                        GroupInputXSize(c) + (_groupDataXBorder * 2),
-                        GroupInputYSize(c) + (_groupDataYBorder * 2),
-                        (nuint)RenderPipelineStage.KRenderPipelineXOffset);
+                    nuint width = GroupInputXSize(c) + (_groupDataXBorder * 2);
+                    nuint height = GroupInputYSize(c) + (_groupDataYBorder * 2);
+                    nuint prePadding = (nuint)RenderPipelineStage.KRenderPipelineXOffset;
+                    // Decoding fills valid pixels; the pipeline loads/mirrors the halo before filtering.
+                    StatusOr<ImagePlane<float>> res = _skipInputZeroInitialization
+                        ? ImagePlane<float>.CreateUninitialized(MemoryManager, width, height, prePadding)
+                        : ImagePlane<float>.Create(MemoryManager, width, height, prePadding);
 
                     if (!res.IsOk)
                     {
