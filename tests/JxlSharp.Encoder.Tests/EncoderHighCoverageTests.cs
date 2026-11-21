@@ -1460,6 +1460,19 @@ namespace JxlSharp.Encoder
 
             EncFrame.EncodeFrame(mm, new CompressParams(), new FrameInfo(), meta, ib, JxlCms.GetDefaultCms(), (null, bw, null)).IsOk.ShouldBeTrue();
             ((ulong)bw.BitsWritten).ShouldBeGreaterThan(0UL);
+
+            CompressParams losslessParams = new CompressParams
+            {
+                Gaborish = Override.On,
+                Epf      = 2,
+            };
+
+            losslessParams.SetLossless();
+
+            BitWriter bwLossless = new BitWriter(mm);
+
+            EncFrame.EncodeFrame(mm, losslessParams, new FrameInfo(), meta, ib, JxlCms.GetDefaultCms(), (null, bwLossless, null)).IsOk.ShouldBeTrue();
+            ((ulong)bwLossless.BitsWritten).ShouldBeGreaterThan(0UL);
         }
 
         private static void ExerciseJpegHuffmanTableBuilder()
