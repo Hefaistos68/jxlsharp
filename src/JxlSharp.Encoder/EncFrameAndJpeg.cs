@@ -1218,6 +1218,10 @@ namespace JxlSharp.Encoder
 
             if (ib != null && ib.IsJPEG())
             {
+                cparams.Gaborish           = Override.Off;
+                cparams.Epf                = 0;
+                cparams.ModularMode        = false;
+                cparams.ColorTransform     = ib.ColorTransform;
                 frameHeader.Encoding       = FrameEncoding.VarDCT;
                 frameHeader.ColorTransform = ib.ColorTransform;
             }

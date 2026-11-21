@@ -8,6 +8,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using JxlSharp.Base;
@@ -16,6 +17,7 @@ using JxlSharp.Decoder;
 using JxlSharp.Encoder;
 using JxlSharp.Extras;
 using JxlSharp.TestLib;
+using JxlSharp.Tools;
 using NUnit.Framework;
 using Shouldly;
 
@@ -1283,6 +1285,58 @@ namespace JxlSharp.Integration.Tests
             CodecJxl.DecodeImageJXL(compressed, dparams, out _, ppf, outJpeg).ShouldBeTrue();
             outJpeg.Count.ShouldBe(jpegIn.Length);
             outJpeg.ToArray().AsSpan().SequenceEqual(jpegIn).ShouldBeTrue();
+        }
+
+        /// <summary>
+        /// Verifies lossless JPEG recompression succeeds with <c>Distance = 0</c>, <c>Modular = 1</c>, and <c>cjxl -j 1</c>.
+        /// </summary>
+        [TestCase("jxl/flower/flower.png.im_q85_420.jpg")]
+        [TestCase("jxl/flower/flower.png.im_q85_444.jpg")]
+        [TestCase("jxl/flower/flower.png.im_q85_gray.jpg")]
+        public void RoundtripJpegRecompressionWithLosslessModularAndCjxl(string jpegPath)
+        {
+            byte[] jpegIn             = TestUtils.ReadTestData(jpegPath);
+            JXLCompressParams cparams = new JXLCompressParams { Distance = 0.0f };
+
+            cparams.AddOption(JxlEncoderFrameSettingId.Modular, 1);
+            cparams.AddOption(JxlEncoderFrameSettingId.Effort, 7);
+
+            CodecJxl.EncodeImageJXL(cparams, new PackedPixelFile(), jpegIn, out byte[] compressed).ShouldBeTrue();
+
+            List<byte> outJpeg  = new List<byte>();
+            PackedPixelFile ppf = new PackedPixelFile();
+
+            CodecJxl.DecodeImageJXL(compressed, new JXLDecompressParams(), out _, ppf, outJpeg).ShouldBeTrue();
+            outJpeg.Count.ShouldBe(jpegIn.Length);
+            outJpeg.ToArray().AsSpan().SequenceEqual(jpegIn).ShouldBeTrue();
+
+            string tmpDir = Path.Combine(Path.GetTempPath(), $"jxlsharp_jpeg_transcode_{Guid.NewGuid():N}");
+
+            Directory.CreateDirectory(tmpDir);
+
+            try
+            {
+                string inPath  = Path.Combine(tmpDir, "input.jpg");
+                string jxlPath = Path.Combine(tmpDir, "output.jxl");
+                string outPath = Path.Combine(tmpDir, "recon.jpg");
+
+                File.WriteAllBytes(inPath, jpegIn);
+
+                using StringWriter outSw = new StringWriter();
+                using StringWriter errSw = new StringWriter();
+
+                CjxlTool.Run(new string[] { inPath, jxlPath, "-j", "1", "-e", "7" }, outSw, errSw).ShouldBe(0);
+                DjxlTool.Run(new string[] { jxlPath, outPath }, outSw, errSw).ShouldBe(0);
+
+                byte[] recon = File.ReadAllBytes(outPath);
+
+                recon.Length.ShouldBe(jpegIn.Length);
+                recon.AsSpan().SequenceEqual(jpegIn).ShouldBeTrue();
+            }
+            finally
+            {
+                Directory.Delete(tmpDir, recursive: true);
+            }
         }
 
         /// <summary>
