@@ -9,7 +9,12 @@
 using System;
 using System.IO;
 using JxlSharp.Base;
+using JxlSharp.Cms;
+using JxlSharp.Decoder;
 using JxlSharp.Encoder;
+using JxlSharp.Extras;
+using JxlSharp.TestLib;
+using JxlSharp.Tools;
 using Moq;
 using NUnit.Framework;
 using Shouldly;
@@ -171,6 +176,73 @@ namespace JxlSharp
             }
 
             return pixels;
+        }
+
+        /// <summary>
+        /// Verifies that <see cref="JxlSharpCodec.EncodeFromFormat(ReadOnlySpan{byte}, JxlEncodeOptions)"/> losslessly transcodes a JPEG bitstream
+        /// without requiring pixel decoding and reconstructs byte-identical JPEG output.
+        /// </summary>
+        [Test]
+        public void ExtendedCodec_EncodeFromFormat_JpegLosslessTranscode_ReconstructsExactBytes()
+        {
+            JxlSharpCodec sut        = new JxlSharpCodec();
+            byte[] jpegBytes         = TestUtils.ReadTestData("jxl/flower/flower.png.im_q85_420.jpg");
+            JxlEncodeOptions options = new JxlEncodeOptions { Effort = 3 };
+            byte[] jxlBytes          = sut.EncodeFromFormat(jpegBytes, options);
+            byte[] reconstructed     = sut.DecodeToFormat(jxlBytes, ".jpg");
+
+            reconstructed.Length.ShouldBe(jpegBytes.Length);
+            reconstructed.AsSpan().SequenceEqual(jpegBytes).ShouldBeTrue();
+        }
+
+        /// <summary>
+        /// Verifies that lossless round-tripping 16-bit HLG HDR PNG preserves the 1000-nit intensity target
+        /// and achieves lossless PSNR and SSIMULACRA2 parity.
+        /// </summary>
+        [Test]
+        public void HdrRoom16BitHlg_LosslessRoundtrip_PreservesIntensityTargetAndPerfectMetrics()
+        {
+            byte[] pngBytes         = TestUtils.ReadTestData("jxl/hdr_room.png");
+            PackedPixelFile origPpf = new PackedPixelFile();
+            CodecInOut origIo       = new CodecInOut();
+
+            ExtrasDecodeFacade.DecodeBytes(pngBytes, new ColorHints(), origPpf, null, out _).IsOk.ShouldBeTrue();
+            PackedImageConvert.ConvertPackedPixelFileToCodecInOut(origPpf, null, origIo).IsOk.ShouldBeTrue();
+
+            JXLCompressParams cparams = new JXLCompressParams { Distance = 0.0f };
+
+            cparams.AddOption(JxlEncoderFrameSettingId.Modular, 1);
+            cparams.AddOption(JxlEncoderFrameSettingId.Effort, 1);
+
+            CodecJxl.EncodeImageJXL(cparams, origPpf, null, out byte[] jxlBytes).ShouldBeTrue();
+
+            JXLDecompressParams dparams = new JXLDecompressParams { KeepOrientation = true };
+
+            for (uint ch = 1; ch <= 4; ch++)
+            {
+                dparams.AcceptedFormats.Add(new JxlPixelFormat
+                {
+                    NumChannels = ch,
+                    DataType    = JxlDataType.Float,
+                    Endianness  = JxlEndianness.LittleEndian,
+                    Align       = 0,
+                });
+            }
+
+            PackedPixelFile decPpf = new PackedPixelFile();
+            CodecInOut decIo       = new CodecInOut();
+
+            CodecJxl.DecodeImageJXL(jxlBytes, dparams, out _, decPpf).ShouldBeTrue();
+            PackedImageConvert.ConvertPackedPixelFileToCodecInOut(decPpf, null, decIo).IsOk.ShouldBeTrue();
+
+            decIo.Metadata.M.IntensityTarget().ShouldBe(1000.0f, 0.5f);
+
+            double psnr               = ExtrasMetrics.ComputePSNR(origIo.Main, decIo.Main, JxlCms.GetDefaultCms());
+            StatusOr<Msssim> ssim2Or  = Ssimulacra2.ComputeSSIMULACRA2(origIo.Main, decIo.Main);
+
+            psnr.ShouldBe(99.99, 0.01);
+            ssim2Or.IsOk.ShouldBeTrue();
+            ssim2Or.Value.Score().ShouldBe(100.0, 0.01);
         }
     }
 }
