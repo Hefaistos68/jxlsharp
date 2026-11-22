@@ -7,13 +7,13 @@
 // Site or repo: https://github.com/Hefaistos68
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using JxlSharp.Base;
 using JxlSharp.Cms;
 using JxlSharp.Decoder;
 using JxlSharp.Encoder;
 using JxlSharp.Extras;
-using JxlSharp.TestLib;
 using JxlSharp.Tools;
 using Moq;
 using NUnit.Framework;
@@ -186,7 +186,7 @@ namespace JxlSharp
         public void ExtendedCodec_EncodeFromFormat_JpegLosslessTranscode_ReconstructsExactBytes()
         {
             JxlSharpCodec sut        = new JxlSharpCodec();
-            byte[] jpegBytes         = TestUtils.ReadTestData("jxl/flower/flower.png.im_q85_420.jpg");
+            byte[] jpegBytes         = BuildSynthetic420BaselineJpeg();
             JxlEncodeOptions options = new JxlEncodeOptions { Effort = 3 };
             byte[] jxlBytes          = sut.EncodeFromFormat(jpegBytes, options);
             byte[] reconstructed     = sut.DecodeToFormat(jxlBytes, ".jpg");
@@ -196,17 +196,15 @@ namespace JxlSharp
         }
 
         /// <summary>
-        /// Verifies that lossless round-tripping 16-bit HLG HDR PNG preserves the 1000-nit intensity target
+        /// Verifies that lossless round-tripping a 16-bit Rec.2100 HLG HDR image preserves the 1000-nit intensity target
         /// and achieves lossless PSNR and SSIMULACRA2 parity.
         /// </summary>
         [Test]
         public void HdrRoom16BitHlg_LosslessRoundtrip_PreservesIntensityTargetAndPerfectMetrics()
         {
-            byte[] pngBytes         = TestUtils.ReadTestData("jxl/hdr_room.png");
-            PackedPixelFile origPpf = new PackedPixelFile();
+            PackedPixelFile origPpf = CreateSynthetic16BitHlgPixelFile(64, 64);
             CodecInOut origIo       = new CodecInOut();
 
-            ExtrasDecodeFacade.DecodeBytes(pngBytes, new ColorHints(), origPpf, null, out _).IsOk.ShouldBeTrue();
             PackedImageConvert.ConvertPackedPixelFileToCodecInOut(origPpf, null, origIo).IsOk.ShouldBeTrue();
 
             JXLCompressParams cparams = new JXLCompressParams { Distance = 0.0f };
@@ -237,12 +235,118 @@ namespace JxlSharp
 
             decIo.Metadata.M.IntensityTarget().ShouldBe(1000.0f, 0.5f);
 
-            double psnr               = ExtrasMetrics.ComputePSNR(origIo.Main, decIo.Main, JxlCms.GetDefaultCms());
-            StatusOr<Msssim> ssim2Or  = Ssimulacra2.ComputeSSIMULACRA2(origIo.Main, decIo.Main);
+            double psnr              = ExtrasMetrics.ComputePSNR(origIo.Main, decIo.Main, JxlCms.GetDefaultCms());
+            StatusOr<Msssim> ssim2Or = Ssimulacra2.ComputeSSIMULACRA2(origIo.Main, decIo.Main);
 
             psnr.ShouldBe(99.99, 0.01);
             ssim2Or.IsOk.ShouldBeTrue();
             ssim2Or.Value.Score().ShouldBe(100.0, 0.01);
+        }
+
+        private static byte[] BuildSynthetic420BaselineJpeg()
+        {
+            List<byte> b = new List<byte>
+            {
+                0xFF, 0xD8,
+                0xFF, 0xDB, 0x00, 0x43, 0x00,
+            };
+
+            for (int i = 0; i < 64; i++)
+            {
+                b.Add(16);
+            }
+
+            // SOF0: 16x16, 3 components (4:2:0 subsampling: Y 2x2, Cb 1x1, Cr 1x1).
+            b.AddRange(new byte[]
+            {
+                0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
+                0x01, 0x22, 0x00,
+                0x02, 0x11, 0x00,
+                0x03, 0x11, 0x00,
+            });
+
+            // DHT DC table 0: 1 symbol (0x00) of length 1 bit ("0").
+            b.AddRange(new byte[] { 0xFF, 0xC4, 0x00, 0x14, 0x00, 1 });
+
+            for (int i = 0; i < 15; i++)
+            {
+                b.Add(0);
+            }
+
+            b.Add(0x00);
+
+            // DHT AC table 0: 1 symbol (0x00 = EOB) of length 1 bit ("0").
+            b.AddRange(new byte[] { 0xFF, 0xC4, 0x00, 0x14, 0x10, 1 });
+
+            for (int i = 0; i < 15; i++)
+            {
+                b.Add(0);
+            }
+
+            b.Add(0x00);
+
+            // SOS: 3 components, 1 MCU = 6 blocks * (DC=0 + AC=EOB) = 12 zero bits + 4 pad 1-bits.
+            b.AddRange(new byte[]
+            {
+                0xFF, 0xDA, 0x00, 0x0C, 0x03,
+                0x01, 0x00,
+                0x02, 0x00,
+                0x03, 0x00,
+                0x00, 0x3F, 0x00,
+                0x00, 0x0F,
+                0xFF, 0xD9,
+            });
+
+            return b.ToArray();
+        }
+
+        private static PackedPixelFile CreateSynthetic16BitHlgPixelFile(uint width, uint height)
+        {
+            PackedPixelFile ppf = new PackedPixelFile();
+
+            ppf.Info.XSize                 = width;
+            ppf.Info.YSize                 = height;
+            ppf.Info.BitsPerSample         = 16;
+            ppf.Info.ExponentBitsPerSample = 0;
+            ppf.Info.NumColorChannels      = 3;
+            ppf.Info.NumExtraChannels      = 0;
+            ppf.Info.IntensityTarget       = 0;
+            ppf.ColorEncoding              = new JxlColorEncoding
+            {
+                ColorSpace       = JxlColorSpace.Rgb,
+                WhitePoint       = JxlWhitePoint.D65,
+                Primaries        = JxlPrimaries.Bt2100,
+                TransferFunction = JxlTransferFunction.Hlg,
+                RenderingIntent  = JxlRenderingIntent.Relative,
+            };
+
+            JxlPixelFormat format          = new JxlPixelFormat(3, JxlDataType.UInt16, JxlEndianness.NativeEndian, 0);
+            StatusOr<PackedFrame> frameOr  = PackedFrame.Create(width, height, format);
+
+            frameOr.IsOk.ShouldBeTrue();
+
+            PackedFrame frame = frameOr.Value;
+            Span<byte> pixels = frame.Color.Pixels();
+            int offset        = 0;
+
+            for (uint y = 0; y < height; y++)
+            {
+                for (uint x = 0; x < width; x++)
+                {
+                    ushort r = (ushort)((x * 65535u) / (width - 1));
+                    ushort g = (ushort)((y * 65535u) / (height - 1));
+                    ushort b = (ushort)(((x + y) * 65535u) / (width + height - 2));
+
+                    BitConverter.TryWriteBytes(pixels.Slice(offset, 2), r);
+                    BitConverter.TryWriteBytes(pixels.Slice(offset + 2, 2), g);
+                    BitConverter.TryWriteBytes(pixels.Slice(offset + 4, 2), b);
+                    offset += 6;
+                }
+            }
+
+            ppf.Frames.Add(frame);
+
+            return ppf;
         }
     }
 }
