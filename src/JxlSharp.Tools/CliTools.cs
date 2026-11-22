@@ -314,8 +314,19 @@ namespace JxlSharp.Tools
             {
                 cargs.LosslessJpeg = Override.Off;
             }
+            else if (cargs.LosslessJpeg == Override.Default)
+            {
+                bool wantsLossyOrModular = cargs.GotDistance ||
+                                           (cargs.GotQuality && cargs.Quality < 100.0f) ||
+                                           cargs.Modular == Override.On ||
+                                           cargs.DecodeToPixels ||
+                                           cargs.StreamingInput;
 
-            if (cargs.LosslessJpeg == Override.On && cargs.GotDistance)
+                cargs.LosslessJpeg = wantsLossyOrModular ? Override.Off : Override.On;
+            }
+
+            if (cargs.LosslessJpeg == Override.On &&
+                (cargs.GotDistance || (cargs.GotQuality && cargs.Quality < 100.0f)))
             {
                 errWriter.WriteLine("Lossy encoding options cannot be used with lossless JPEG recompression.");
                 errWriter.WriteLine("Consider adding -j 0 to allow lossy encoding.");
@@ -327,6 +338,8 @@ namespace JxlSharp.Tools
 
             if (!decodePixels)
             {
+                PopulateJpegHeaderDimensions(imageData, ppf);
+
                 return true;
             }
 
@@ -351,6 +364,19 @@ namespace JxlSharp.Tools
             }
 
             return true;
+        }
+
+        private static void PopulateJpegHeaderDimensions(byte[] imageData, PackedPixelFile ppf)
+        {
+            JPEGData header = new JPEGData();
+
+            if (EncJpegDataReader.ReadJpeg(imageData, JpegReadMode.kReadHeader, header) &&
+                header.Width > 0 &&
+                header.Height > 0)
+            {
+                ppf.Info.XSize = (uint)header.Width;
+                ppf.Info.YSize = (uint)header.Height;
+            }
         }
 
         private static int RunCompressionLoop(
@@ -572,7 +598,7 @@ namespace JxlSharp.Tools
                 return false;
             }
 
-            if (cargs.Distance == 0.0f)
+            if (cargs.Distance == 0.0f && cargs.LosslessJpeg != Override.On)
             {
                 cargs.Modular = Override.On;
             }
@@ -609,7 +635,7 @@ namespace JxlSharp.Tools
                 }
             }
 
-            if (cargs.Modular == Override.On || cargs.Distance == 0.0f)
+            if (cargs.LosslessJpeg != Override.On && (cargs.Modular == Override.On || cargs.Distance == 0.0f))
             {
                 jparams.AddOption(JxlEncoderFrameSettingId.Modular, 1);
             }
@@ -698,11 +724,6 @@ namespace JxlSharp.Tools
                 {
                     return false;
                 }
-            }
-
-            if (!cargs.GotLosslessJpeg)
-            {
-                cargs.LosslessJpeg = Override.On;
             }
 
             return true;

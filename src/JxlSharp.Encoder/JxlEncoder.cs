@@ -569,6 +569,7 @@ namespace JxlSharp.Encoder
         private ulong _codestreamBytesWritten;
         private bool _basicInfoSet;
         private bool _colorEncodingSet;
+        private bool _intensityTargetSet;
         private bool _wroteHeaders;
         private bool _wroteContainerHeader;
         private bool _framesClosed;
@@ -649,6 +650,7 @@ namespace JxlSharp.Encoder
             _codestreamBytesWritten = 0;
             _basicInfoSet           = false;
             _colorEncodingSet       = false;
+            _intensityTargetSet     = false;
             _wroteHeaders           = false;
             _wroteContainerHeader   = false;
             _framesClosed           = false;
@@ -901,6 +903,11 @@ namespace JxlSharp.Encoder
 
             _colorEncodingSet = true;
 
+            if (!_intensityTargetSet)
+            {
+                Luminance.SetIntensityTarget(_metadata.M);
+            }
+
             return JxlEncoderStatus.Success;
         }
 
@@ -930,6 +937,11 @@ namespace JxlSharp.Encoder
             }
 
             _colorEncodingSet = true;
+
+            if (!_intensityTargetSet)
+            {
+                Luminance.SetIntensityTarget(_metadata.M);
+            }
 
             if (!_basicInfo.UsesOriginalProfile)
             {
@@ -1265,12 +1277,17 @@ namespace JxlSharp.Encoder
                 distance = CompressParams.KMinButteraugliDistance;
             }
 
-            frameSettings.Values.CParams.ButteraugliDistance = distance;
-
             if (distance == 0.0f)
             {
-                frameSettings.Values.Lossless = true;
+                return SetFrameLossless(frameSettings, true);
             }
+
+            if (frameSettings.Values.Lossless)
+            {
+                SetFrameLossless(frameSettings, false);
+            }
+
+            frameSettings.Values.CParams.ButteraugliDistance = distance;
 
             return JxlEncoderStatus.Success;
         }
@@ -1284,11 +1301,22 @@ namespace JxlSharp.Encoder
         /// <returns><see cref="JxlEncoderStatus.Success"/> on success.</returns>
         public JxlEncoderStatus SetFrameLossless(JxlEncoderFrameSettings frameSettings, bool lossless)
         {
+            bool wasLossless              = frameSettings.Values.Lossless;
             frameSettings.Values.Lossless = lossless;
 
             if (lossless)
             {
                 frameSettings.Values.CParams.SetLossless();
+            }
+            else if (wasLossless)
+            {
+                frameSettings.Values.CParams.ModularMode    = false;
+                frameSettings.Values.CParams.ColorTransform = ColorTransform.XYB;
+
+                if (frameSettings.Values.CParams.ButteraugliDistance == 0.0f)
+                {
+                    frameSettings.Values.CParams.ButteraugliDistance = 1.0f;
+                }
             }
 
             return JxlEncoderStatus.Success;
@@ -2191,6 +2219,12 @@ namespace JxlSharp.Encoder
             if (info.IntensityTarget > 0.0f)
             {
                 m.SetIntensityTarget(info.IntensityTarget);
+                _intensityTargetSet = true;
+            }
+            else if (_colorEncodingSet)
+            {
+                Luminance.SetIntensityTarget(m);
+                _intensityTargetSet = true;
             }
 
             m.ToneMapping.MinNits              = info.MinNits;

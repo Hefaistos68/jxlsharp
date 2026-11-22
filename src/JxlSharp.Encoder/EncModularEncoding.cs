@@ -1845,9 +1845,10 @@ namespace JxlSharp.Encoder
 
         private Status Init(FrameHeader frameHeader, CompressParams cparamsOrig, bool streamingMode)
         {
-            _frameDim      = frameHeader.ToFrameDimensions();
-            _cparams       = cparamsOrig.Clone();
-            nuint nStreams = ModularStreamId.Num(_frameDim, frameHeader.Passes.NumPasses);
+            _frameDim            = frameHeader.ToFrameDimensions();
+            _cparams             = cparamsOrig.Clone();
+            _cparams.ModularMode = frameHeader.Encoding == FrameEncoding.Modular;
+            nuint nStreams       = ModularStreamId.Num(_frameDim, frameHeader.Passes.NumPasses);
 
             ConfigureResponsiveAndDecodingTier();
 

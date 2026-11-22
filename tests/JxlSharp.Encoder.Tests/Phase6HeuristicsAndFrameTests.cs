@@ -574,5 +574,130 @@ namespace JxlSharp.Encoder
 
             return result;
         }
+
+        /// <summary>
+        /// Verifies that <see cref="ModularFrameEncoder.Create"/> aligns internal stream allocation with
+        /// <see cref="FrameHeader.Encoding"/> even when <see cref="CompressParams.ModularMode"/> is set to <c>true</c>.
+        /// </summary>
+        [Test]
+        public void ModularFrameEncoder_Create_WithVarDctHeaderAndModularModeTrue_AllocatesVarDctLists()
+        {
+            CodecMetadata metadata = new CodecMetadata();
+
+            metadata.Size.Set(64, 64).IsOk.ShouldBeTrue();
+
+            FrameHeader header = new FrameHeader(metadata)
+            {
+                Encoding = FrameEncoding.VarDCT,
+            };
+
+            CompressParams cparams = new CompressParams
+            {
+                ModularMode = true,
+            };
+
+            StatusOr<ModularFrameEncoder> mfeOr = ModularFrameEncoder.Create(JxlMemoryManager.Default, header, cparams, streamingMode: false);
+
+            mfeOr.IsOk.ShouldBeTrue();
+
+            using ModularFrameEncoder mfe = mfeOr.Value;
+
+            mfe.ExtraDcPrecision.Count.ShouldBeGreaterThan(0);
+            mfe.AcMetadataSize.Count.ShouldBeGreaterThan(0);
+        }
+
+        /// <summary>
+        /// Verifies that toggling <see cref="JxlEncoder.SetFrameLossless"/> and <see cref="JxlEncoder.SetFrameDistance"/>
+        /// on reused frame settings cleanly resets lossless state.
+        /// </summary>
+        [Test]
+        public void JxlEncoder_SetFrameLosslessAndDistance_ReversibleOnReusedSettings()
+        {
+            using JxlEncoder enc             = new JxlEncoder();
+            JxlEncoderFrameSettings settings = enc.FrameSettingsCreate(null);
+
+            enc.SetFrameLossless(settings, true).ShouldBe(JxlEncoderStatus.Success);
+            settings.Values.Lossless.ShouldBeTrue();
+            settings.Values.CParams.ModularMode.ShouldBeTrue();
+            settings.Values.CParams.ColorTransform.ShouldBe(ColorTransform.None);
+
+            enc.SetFrameLossless(settings, false).ShouldBe(JxlEncoderStatus.Success);
+            settings.Values.Lossless.ShouldBeFalse();
+            settings.Values.CParams.ModularMode.ShouldBeFalse();
+            settings.Values.CParams.ColorTransform.ShouldBe(ColorTransform.XYB);
+            settings.Values.CParams.ButteraugliDistance.ShouldBe(1.0f);
+
+            enc.SetFrameDistance(settings, 0.0f).ShouldBe(JxlEncoderStatus.Success);
+            settings.Values.Lossless.ShouldBeTrue();
+            settings.Values.CParams.ModularMode.ShouldBeTrue();
+
+            enc.SetFrameDistance(settings, 1.5f).ShouldBe(JxlEncoderStatus.Success);
+            settings.Values.Lossless.ShouldBeFalse();
+            settings.Values.CParams.ModularMode.ShouldBeFalse();
+            settings.Values.CParams.ColorTransform.ShouldBe(ColorTransform.XYB);
+            settings.Values.CParams.ButteraugliDistance.ShouldBe(1.5f);
+        }
+
+        /// <summary>
+        /// Verifies that <see cref="JxlEncoder.SetColorEncoding"/> sets default HDR intensity targets
+        /// for HLG (<c>1000</c> nits) and PQ (<c>10000</c> nits) when <see cref="JxlBasicInfo.IntensityTarget"/> is zero,
+        /// while preserving an explicit non-zero <see cref="JxlBasicInfo.IntensityTarget"/>.
+        /// </summary>
+        [TestCase(JxlTransferFunction.Hlg, 0.0f, 1000.0f)]
+        [TestCase(JxlTransferFunction.Pq, 0.0f, 10000.0f)]
+        [TestCase(JxlTransferFunction.Hlg, 600.0f, 600.0f)]
+        public void JxlEncoder_SetColorEncoding_HdrTransferFunctions_SetsExpectedIntensityTarget(
+            JxlTransferFunction transferFunction,
+            float requestedIntensityTarget,
+            float expectedIntensityTarget)
+        {
+            using JxlEncoder enc = new JxlEncoder();
+
+            JxlEncoder.JxlEncoderInitBasicInfo(out JxlBasicInfo info);
+            info.XSize               = 4;
+            info.YSize               = 4;
+            info.BitsPerSample       = 16;
+            info.NumColorChannels    = 3;
+            info.UsesOriginalProfile = true;
+            info.IntensityTarget     = requestedIntensityTarget;
+
+            enc.SetBasicInfo(in info).ShouldBe(JxlEncoderStatus.Success);
+
+            JxlColorEncoding colorEncoding = new JxlColorEncoding
+            {
+                ColorSpace       = JxlColorSpace.Rgb,
+                WhitePoint       = JxlWhitePoint.D65,
+                Primaries        = JxlPrimaries.P2100,
+                TransferFunction = transferFunction,
+                RenderingIntent  = JxlRenderingIntent.Relative,
+            };
+
+            enc.SetColorEncoding(in colorEncoding).ShouldBe(JxlEncoderStatus.Success);
+
+            JxlEncoderFrameSettings settings = enc.FrameSettingsCreate(null);
+
+            enc.SetFrameLossless(settings, true).ShouldBe(JxlEncoderStatus.Success);
+            enc.FrameSettingsSetOption(settings, JxlEncoderFrameSettingId.Effort, 1).ShouldBe(JxlEncoderStatus.Success);
+
+            byte[] pixels      = new byte[4 * 4 * 3 * 2];
+            JxlPixelFormat fmt = new JxlPixelFormat
+            {
+                NumChannels = 3,
+                DataType    = JxlDataType.UInt16,
+                Endianness  = JxlEndianness.NativeEndian,
+            };
+
+            enc.AddImageFrame(settings, in fmt, pixels).ShouldBe(JxlEncoderStatus.Success);
+            enc.CloseInput();
+
+            byte[] buffer = new byte[65536];
+            int offset    = 0;
+
+            enc.ProcessOutput(buffer, ref offset).ShouldBe(JxlEncoderStatus.Success);
+
+            JxlBasicInfo decoded = DecodeBasicInfo(buffer.AsSpan(0, offset).ToArray());
+
+            decoded.IntensityTarget.ShouldBe(expectedIntensityTarget, 0.5f);
+        }
     }
 }

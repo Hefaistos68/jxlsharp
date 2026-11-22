@@ -1036,5 +1036,59 @@ namespace JxlSharp.Tools.Tests
                 }
             }
         }
+
+        /// <summary>
+        /// Verifies that <c>cjxl</c> defaults to lossless JPEG transcoding when given a JPEG input without <c>-j</c>,
+        /// reports actual image dimensions instead of <c>0 x 0</c>, and honors explicit <c>-d</c> for lossy pixel encoding.
+        /// </summary>
+        [Test]
+        public void CjxlDefaultJpegInput_TranscodesLosslesslyAndReportsDimensions()
+        {
+            string inputJpg = TestUtils.GetTestDataPath("jxl/flower/flower.png.im_q85_420.jpg");
+            string tempDir  = Path.Combine(Path.GetTempPath(), $"jxlsharp_cjxl_jpg_{Guid.NewGuid():N}");
+
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                string jxlPath   = Path.Combine(tempDir, "default_lossless.jxl");
+                string reconPath = Path.Combine(tempDir, "recon.jpg");
+                string lossyPath = Path.Combine(tempDir, "explicit_lossy.jxl");
+
+                using StringWriter outSw = new StringWriter();
+                using StringWriter errSw = new StringWriter();
+
+                int cjxlRc = CjxlTool.Run(new string[] { inputJpg, jxlPath, "-e", "3" }, outSw, errSw);
+
+                cjxlRc.ShouldBe(0, errSw.ToString());
+                errSw.ToString().ShouldContain("2268 x 1512");
+                errSw.ToString().ShouldNotContain("0 x 0");
+
+                int djxlRc = DjxlTool.Run(new string[] { jxlPath, reconPath }, outSw, errSw);
+
+                djxlRc.ShouldBe(0, errSw.ToString());
+                File.ReadAllBytes(reconPath).ShouldBe(File.ReadAllBytes(inputJpg));
+
+                errSw.GetStringBuilder().Clear();
+
+                int explicitConflictRc = CjxlTool.Run(new string[] { inputJpg, lossyPath, "-j", "1", "-d", "2.0", "-e", "1" }, outSw, errSw);
+
+                explicitConflictRc.ShouldNotBe(0);
+                errSw.ToString().ShouldContain("Lossy encoding options cannot be used with lossless JPEG recompression.");
+
+                errSw.GetStringBuilder().Clear();
+
+                _ = CjxlTool.Run(new string[] { inputJpg, lossyPath, "-d", "2.0", "-e", "1" }, outSw, errSw);
+
+                errSw.ToString().ShouldNotContain("Lossy encoding options cannot be used with lossless JPEG recompression.");
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+        }
     }
 }

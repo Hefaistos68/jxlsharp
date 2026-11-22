@@ -292,14 +292,23 @@ namespace JxlSharp
             Codec detected      = ExtrasDecodeFacade.DetectCodec(imageFileBytes);
             byte[]? rawJpeg     = detected == Codec.Jpg ? imageFileBytes.ToArray() : null;
             PackedPixelFile ppf = new PackedPixelFile();
+
+            if (rawJpeg is not null && options.ShouldUseLosslessJpegTranscode(true))
+            {
+                if (TryEncodeLosslessJpegDirectly(ppf, options, rawJpeg, out byte[] transcoded))
+                {
+                    return transcoded;
+                }
+            }
+
             Status decodeStatus = ExtrasDecodeFacade.DecodeBytes(imageFileBytes, options.ColorHints, ppf);
 
-            if (!decodeStatus && rawJpeg is null)
+            if (!decodeStatus)
             {
                 throw new InvalidOperationException($"Failed to decode input image buffer ({decodeStatus}).");
             }
 
-            return Encode(ppf, options, rawJpeg);
+            return Encode(ppf, options, null);
         }
 
         /// <inheritdoc />
@@ -424,15 +433,27 @@ namespace JxlSharp
             ArgumentNullException.ThrowIfNull(options);
 
             string normalizedExt = NormalizeExtension(targetExtension);
-            if (jxlBytes.IsEmpty) throw new ArgumentException("Input JXL buffer must not be empty.", nameof(jxlBytes));
-            JxlDecodeResult res = DecodeCore(jxlBytes.ToArray(), options, PrimaryImageHandling.Skip);
 
-            if ((normalizedExt == ".jpg" || normalizedExt == ".jpeg") &&
-                res.ReconstructedJpegBytes is not null &&
-                res.ReconstructedJpegBytes.Length > 0)
+            if (jxlBytes.IsEmpty)
             {
-                return res.ReconstructedJpegBytes;
+                throw new ArgumentException("Input JXL buffer must not be empty.", nameof(jxlBytes));
             }
+
+            byte[] jxlArray = jxlBytes.ToArray();
+
+            if (normalizedExt == ".jpg" || normalizedExt == ".jpeg")
+            {
+                JXLDecompressParams dparams = options.ToDecompressParams();
+                using IDisposable? scope    = AttachParallelRunner(dparams, options.NumThreads);
+                byte[]? reconJpeg           = TryReconstructJpeg(jxlArray, dparams, options.SizeConstraints);
+
+                if (reconJpeg is not null && reconJpeg.Length > 0)
+                {
+                    return reconJpeg;
+                }
+            }
+
+            JxlDecodeResult res = DecodeCore(jxlArray, options, PrimaryImageHandling.Skip);
 
             Status status = ExtrasCodec.Encode(res.PixelFile, $"output{normalizedExt}", out byte[] encodedBytes);
 
@@ -442,6 +463,19 @@ namespace JxlSharp
             }
 
             return encodedBytes;
+        }
+
+        private static bool TryEncodeLosslessJpegDirectly(
+            PackedPixelFile ppf,
+            JxlEncodeOptions options,
+            byte[] jpegBytes,
+            out byte[] compressed)
+        {
+            JXLCompressParams cparams = options.ToCompressParams(ppf, isJpegInput: true);
+            using IDisposable? scope  = AttachParallelRunner(cparams, options.NumThreads);
+            bool ok                   = CodecJxl.EncodeImageJXL(cparams, ppf, jpegBytes, out compressed);
+
+            return ok && compressed.Length > 0;
         }
 
         private static bool EncodeWithFallback(
